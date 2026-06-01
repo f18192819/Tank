@@ -141,9 +141,29 @@ private:
     {
         if (screen_ == Screen::Playing)
         {
-            if (key == VK_ESCAPE)
+            if (key == 'P')
             {
                 screen_ = Screen::Paused;
+                return;
+            }
+
+            if (key == VK_ESCAPE)
+            {
+                PostQuitMessage(0);
+                return;
+            }
+
+            if (game_.state() == GameState::StageCleared && key == VK_RETURN)
+            {
+                game_.advanceStage();
+                return;
+            }
+
+            if ((game_.state() == GameState::Victory || game_.state() == GameState::Defeat) && key == VK_RETURN)
+            {
+                game_.setDifficulty(difficulty_);
+                game_.reset();
+                return;
             }
             return;
         }
@@ -151,6 +171,10 @@ private:
         if (key == VK_ESCAPE)
         {
             if (screen_ == Screen::Home)
+            {
+                PostQuitMessage(0);
+            }
+            else if (screen_ == Screen::Paused)
             {
                 PostQuitMessage(0);
             }
@@ -310,7 +334,8 @@ private:
         addButton(hdc, 360, 396, 280, 54, L"Settings", 3);
         addButton(hdc, 360, 464, 280, 54, L"Quit", 4);
 
-        text(hdc, 278, 610, L"WASD move  J fire  F bomb  E laser  Q shovel  G decoy", 18, RGB(154, 169, 164), false);
+        text(hdc, 246, 610, L"WASD move  Arrow keys move  Space/J fire  F bomb  E laser", 18, RGB(154, 169, 164), false);
+        text(hdc, 234, 638, L"Q shovel  T trench  G decoy  P pause  Enter continue/restart  Esc exits", 18, RGB(154, 169, 164), false);
     }
 
     void drawDifficulty(HDC hdc, const RECT& client)
@@ -397,12 +422,22 @@ private:
             RECT hp = bar;
             hp.right = hp.left + (bar.right - bar.left) * game_.bossLives() / game_.bossMaxLives();
             fill(hdc, hp, RGB(196, 72, 62));
+            const std::string status = game_.bossStatusText();
+            if (!status.empty())
+            {
+                std::wstring bossText(status.begin(), status.end());
+                text(hdc, 716, 17, bossText, 18, RGB(255, 244, 184), true);
+            }
         }
 
         if (game_.state() == GameState::Victory || game_.state() == GameState::Defeat)
         {
-            std::wstring message = game_.state() == GameState::Victory ? L"VICTORY - R restart, Esc menu" : L"DEFEAT - R restart, Esc menu";
+            std::wstring message = game_.state() == GameState::Victory ? L"VICTORY - Enter restart, Esc quit" : L"DEFEAT - Enter restart, Esc quit";
             text(hdc, 322, 760, message, 24, RGB(255, 255, 255), true);
+        }
+        else if (game_.state() == GameState::StageCleared)
+        {
+            text(hdc, 318, 760, L"STAGE CLEAR - Press Enter for next level", 24, RGB(255, 255, 255), true);
         }
     }
 
@@ -435,8 +470,7 @@ private:
         case 'X': base = RGB(180, 55, 44); break;
         case '*': base = RGB(246, 232, 142); break;
         case '!': base = RGB(218, 74, 55); break;
-        case 'H': base = RGB(220, 137, 69); break;
-        case 'S': case 'F': case 'R': case 'Q':
+        case 'S': case 'F': case 'R': case 'Q': case 'H':
             drawItemBlock(hdc, x, y, tile, glyph);
             return;
         case '@': case '^': case '>': case 'v': case '<':
@@ -483,13 +517,21 @@ private:
             const TimedEffect& effect = game_.effects()[i];
             const int cx = startX + static_cast<int>((effect.position.x + 0.5) * tile);
             const int cy = startY + static_cast<int>((effect.position.y + 0.5) * tile);
-            if (effect.glyph == '-' || effect.glyph == '|')
+            if (effect.type == EffectType::SpawnWarning)
             {
-                drawLaserMark(hdc, cx, cy, tile, effect.glyph);
+                drawSpawnWarning(hdc, cx, cy, tile, effect.ticks);
             }
-            else if (effect.glyph == 'H')
+            else if (effect.type == EffectType::Decoy)
             {
-                drawItemBlock(hdc, startX + effect.position.x * tile, startY + effect.position.y * tile, tile, 'H');
+                drawDecoyGlow(hdc, cx, cy, tile, effect.ticks);
+            }
+            else if (effect.type == EffectType::AirStrikeWarning)
+            {
+                drawAirStrikeWarning(hdc, cx, cy, tile, effect.ticks);
+            }
+            else if (effect.type == EffectType::LaserTrace)
+            {
+                drawLaserTrace(hdc, cx, cy, tile, effect.glyph, effect.fromPlayer);
             }
             else
             {
@@ -511,7 +553,7 @@ private:
         for (std::size_t i = 0; i < game_.enemies().size(); ++i)
         {
             const EnemyTank& enemy = *game_.enemies()[i];
-            if (enemy.isAlive())
+            if (enemy.isAlive() && enemy.isVisible())
             {
                 drawEnemyTank(hdc,
                     startX + static_cast<int>((enemy.precisePosition().x - 0.5) * tile),
@@ -639,23 +681,59 @@ private:
         DeleteObject(pink);
     }
 
-    void drawLaserMark(HDC hdc, int cx, int cy, int tile, char glyph)
+    void drawSpawnWarning(HDC hdc, int cx, int cy, int tile, int ticks)
     {
-        RECT glow;
-        RECT core;
-        if (glyph == '-')
+        const COLORREF color = (ticks / 3) % 2 == 0 ? RGB(255, 90, 90) : RGB(255, 230, 120);
+        HPEN pen = CreatePen(PS_SOLID, 3, color);
+        HGDIOBJ oldPen = SelectObject(hdc, pen);
+        HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        Ellipse(hdc, cx - tile / 2, cy - tile / 2, cx + tile / 2, cy + tile / 2);
+        Ellipse(hdc, cx - tile / 3, cy - tile / 3, cx + tile / 3, cy + tile / 3);
+        SelectObject(hdc, oldBrush);
+        SelectObject(hdc, oldPen);
+        DeleteObject(pen);
+    }
+
+    void drawDecoyGlow(HDC hdc, int cx, int cy, int tile, int ticks)
+    {
+        const COLORREF core = (ticks / 5) % 2 == 0 ? RGB(255, 180, 70) : RGB(255, 240, 120);
+        RECT outer = {cx - tile / 3, cy - tile / 3, cx + tile / 3, cy + tile / 3};
+        RECT inner = {cx - tile / 6, cy - tile / 6, cx + tile / 6, cy + tile / 6};
+        fill(hdc, outer, RGB(100, 42, 16));
+        fill(hdc, inner, core);
+        frame(hdc, outer, RGB(255, 255, 255), 2);
+    }
+
+    void drawAirStrikeWarning(HDC hdc, int cx, int cy, int tile, int ticks)
+    {
+        const COLORREF color = (ticks / 2) % 2 == 0 ? RGB(255, 40, 40) : RGB(255, 200, 200);
+        HPEN pen = CreatePen(PS_SOLID, 3, color);
+        HGDIOBJ oldPen = SelectObject(hdc, pen);
+        MoveToEx(hdc, cx - tile / 2, cy - tile / 2, nullptr);
+        LineTo(hdc, cx + tile / 2, cy + tile / 2);
+        MoveToEx(hdc, cx + tile / 2, cy - tile / 2, nullptr);
+        LineTo(hdc, cx - tile / 2, cy + tile / 2);
+        SelectObject(hdc, oldPen);
+        DeleteObject(pen);
+    }
+
+    void drawLaserTrace(HDC hdc, int cx, int cy, int tile, char glyph, bool fromPlayer)
+    {
+        const COLORREF color = fromPlayer ? RGB(70, 255, 255) : RGB(255, 96, 96);
+        HPEN pen = CreatePen(PS_SOLID, 4, color);
+        HGDIOBJ oldPen = SelectObject(hdc, pen);
+        if (glyph == '|')
         {
-            glow = {cx - tile / 2, cy - tile / 7, cx + tile / 2, cy + tile / 7};
-            core = {cx - tile / 2, cy - 2, cx + tile / 2, cy + 3};
+            MoveToEx(hdc, cx, cy - tile / 2, nullptr);
+            LineTo(hdc, cx, cy + tile / 2);
         }
         else
         {
-            glow = {cx - tile / 7, cy - tile / 2, cx + tile / 7, cy + tile / 2};
-            core = {cx - 2, cy - tile / 2, cx + 3, cy + tile / 2};
+            MoveToEx(hdc, cx - tile / 2, cy, nullptr);
+            LineTo(hdc, cx + tile / 2, cy);
         }
-
-        fill(hdc, glow, RGB(40, 120, 255));
-        fill(hdc, core, RGB(210, 245, 255));
+        SelectObject(hdc, oldPen);
+        DeleteObject(pen);
     }
 
     void drawTank(HDC hdc, int x, int y, int tile, COLORREF color, char glyph)
@@ -860,6 +938,35 @@ private:
 
 int RunWinApp(HINSTANCE instance, int showCommand)
 {
+    wchar_t selfTestFlag[8] = {};
+    if (GetEnvironmentVariableW(L"TANK_SELFTEST", selfTestFlag, 8) > 0)
+    {
+        Game selfTestGame;
+        std::string report;
+        const bool passed = selfTestGame.runSelfTest(report);
+
+        wchar_t reportPath[MAX_PATH] = {};
+        if (GetEnvironmentVariableW(L"TANK_SELFTEST_REPORT", reportPath, MAX_PATH) > 0)
+        {
+            HANDLE file = CreateFileW(
+                reportPath,
+                GENERIC_WRITE,
+                0,
+                nullptr,
+                CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                nullptr);
+            if (file != INVALID_HANDLE_VALUE)
+            {
+                DWORD written = 0;
+                WriteFile(file, report.data(), static_cast<DWORD>(report.size()), &written, nullptr);
+                CloseHandle(file);
+            }
+        }
+
+        return passed ? 0 : 2;
+    }
+
     PixelApp app;
     if (!app.create(instance, showCommand))
     {

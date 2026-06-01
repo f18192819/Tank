@@ -1,5 +1,6 @@
 #include "Tank.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <windows.h>
 
@@ -38,6 +39,16 @@ int Tank::lives() const
 int Tank::maxLives() const
 {
     return maxLives_;
+}
+
+int Tank::bulletSpeed() const
+{
+    return bulletSpeed_;
+}
+
+double Tank::moveSpeedValue() const
+{
+    return moveSpeed_;
 }
 
 bool Tank::isShielded() const
@@ -88,18 +99,13 @@ bool Tank::canFire() const
 
 bool Tank::takeHit()
 {
-    return takeDamage(1);
-}
-
-bool Tank::takeDamage(int amount)
-{
     if (shieldTicks_ > 0)
     {
         shieldTicks_ = 0;
         return false;
     }
 
-    lives_ -= amount;
+    --lives_;
     if (lives_ <= 0)
     {
         destroy();
@@ -107,6 +113,11 @@ bool Tank::takeDamage(int amount)
     }
 
     return false;
+}
+
+bool Tank::isVisible() const
+{
+    return true;
 }
 
 char Tank::glyph() const
@@ -125,7 +136,6 @@ bool Tank::tryMove(Game& game, Direction direction)
         return true;
     }
 
-    game.resolveTankCollision(this, ToCell(target));
     return false;
 }
 
@@ -151,7 +161,7 @@ PlayerTank::PlayerTank(const Vec2& position)
       shovels_(0),
       decoys_(0)
 {
-    setStats(5, 10, 2, 4, EnemyKind::Scout);
+    setStats(5, 10, 2, 4, EnemyKind::Player);
     moveSpeed_ = 0.095;
 }
 
@@ -209,12 +219,11 @@ void PlayerTank::update(Game& game)
 {
     reduceFireCooldown();
 
-    if (GetAsyncKeyState('J') & 0x8000)
-    {
-        tryFire(game, true);
-    }
-
     if (GetAsyncKeyState('W') & 0x8000)
+    {
+        tryMove(game, Direction::Up);
+    }
+    else if (GetAsyncKeyState(VK_UP) & 0x8000)
     {
         tryMove(game, Direction::Up);
     }
@@ -222,13 +231,30 @@ void PlayerTank::update(Game& game)
     {
         tryMove(game, Direction::Right);
     }
+    else if (GetAsyncKeyState(VK_RIGHT) & 0x8000)
+    {
+        tryMove(game, Direction::Right);
+    }
     else if (GetAsyncKeyState('S') & 0x8000)
+    {
+        tryMove(game, Direction::Down);
+    }
+    else if (GetAsyncKeyState(VK_DOWN) & 0x8000)
     {
         tryMove(game, Direction::Down);
     }
     else if (GetAsyncKeyState('A') & 0x8000)
     {
         tryMove(game, Direction::Left);
+    }
+    else if (GetAsyncKeyState(VK_LEFT) & 0x8000)
+    {
+        tryMove(game, Direction::Left);
+    }
+
+    if ((GetAsyncKeyState(VK_SPACE) & 0x8000) || (GetAsyncKeyState('J') & 0x8000))
+    {
+        tryFire(game, true);
     }
 
     if ((GetAsyncKeyState('F') & 0x8000) && bombShells_ > 0)
@@ -259,7 +285,7 @@ void PlayerTank::update(Game& game)
     if ((GetAsyncKeyState('G') & 0x8000) && decoys_ > 0)
     {
         --decoys_;
-        game.placeDecoy(position_ + DirectionDelta(direction_));
+        game.placeDecoy(position_);
     }
 }
 
@@ -270,7 +296,11 @@ EnemyTank::EnemyTank(const Vec2& position, EnemyKind kind, int seed)
       skillCooldown_(40),
       moveDebt_(0),
       turnCooldown_(0),
-      fireTimer_(0)
+      fireTimer_(0),
+      invisibilityTicks_(0),
+      reflectTicks_(0),
+      chargeTicks_(0),
+      pathRefreshTicks_(0)
 {
     direction_ = static_cast<Direction>((std::rand() + seed_) % 4);
     chooseTurnCooldown();
@@ -292,24 +322,24 @@ EnemyTank::EnemyTank(const Vec2& position, EnemyKind kind, int seed)
         moveSpeed_ = 0.080;
         break;
     case EnemyKind::Bomber:
-        setStats(4, 32, 1, 5, kind);
+        setStats(4, 32, 4, 5, kind);
         moveSpeed_ = 0.074;
         break;
     case EnemyKind::Kamikaze:
-        setStats(5, 35, 4, 2, kind);
+        setStats(5, 35, 5, 2, kind);
         moveSpeed_ = 0.120;
         break;
     case EnemyKind::StageTwoBoss:
-        setStats(8, 16, 5, 4, kind);
+        setStats(8, 16, 6, 4, kind);
         setShield(100);
         moveSpeed_ = 0.068;
         break;
     case EnemyKind::StageThreeBoss:
-        setStats(10, 14, 6, 4, kind);
+        setStats(10, 14, 7, 4, kind);
         moveSpeed_ = 0.062;
         break;
     case EnemyKind::FinalBoss:
-        setStats(16, 12, 7, 3, kind);
+        setStats(16, 12, 8, 3, kind);
         setShield(120);
         moveSpeed_ = 0.056;
         break;
@@ -321,6 +351,14 @@ void EnemyTank::update(Game& game)
     reduceFireCooldown();
     ++aiCounter_;
     ++fireTimer_;
+    if (invisibilityTicks_ > 0)
+    {
+        --invisibilityTicks_;
+    }
+    if (reflectTicks_ > 0)
+    {
+        --reflectTicks_;
+    }
     if (skillCooldown_ > 0)
     {
         --skillCooldown_;
@@ -343,15 +381,7 @@ void EnemyTank::update(Game& game)
     if (fireTimer_ >= fixedFireInterval())
     {
         fireTimer_ = 0;
-        if (kind_ == EnemyKind::LaserGuard)
-        {
-            setShield(45);
-            game.fireLaser(position_, direction_, false);
-        }
-        else
-        {
-            tryFire(game, false);
-        }
+        tryFire(game, false);
     }
 
     if (turnCooldown_ > 0)
@@ -368,30 +398,40 @@ void EnemyTank::update(Game& game)
     if (aiCounter_ % moveInterval_ == 0)
     {
         const Vec2 target = game.enemyAttractedTarget(position_);
-        const int dx = target.x - position_.x;
-        const int dy = target.y - position_.y;
+        const bool targetVisible = game.hasLineOfSight(position_, target);
 
         if (kind_ == EnemyKind::Kamikaze)
         {
-            Direction chase = std::abs(dx) > std::abs(dy)
-                ? (dx > 0 ? Direction::Right : Direction::Left)
-                : (dy > 0 ? Direction::Down : Direction::Up);
-            if (!tryMove(game, chase))
-            {
-                chooseNewDirection(game, true);
-            }
+            updateSuicidePath(game);
             if (ManhattanDistance(position_, game.playerPosition()) <= 1)
             {
-                game.markDanger(position_, 28, false);
-                if (aiCounter_ % 28 == 0)
+                ++chargeTicks_;
+                game.markDanger(position_, 12, false);
+                // Kamikaze updates its charge every other tick, so 63 steps is about 2 seconds at 16 ms/tick.
+                if (chargeTicks_ >= 63)
                 {
                     game.explodeArea(position_, false);
                     destroy();
                 }
             }
+            else
+            {
+                chargeTicks_ = 0;
+            }
         }
         else
         {
+            if (targetVisible)
+            {
+                direction_ = DirectionToward(position_, target);
+            }
+
+            if (targetVisible && IsAligned(position_, target) && fireTimer_ >= fixedFireInterval() / 2)
+            {
+                fireTimer_ = 0;
+                tryFire(game, false);
+            }
+
             if (!tryMove(game, direction_))
             {
                 chooseNewDirection(game, true);
@@ -437,38 +477,86 @@ bool EnemyTank::isBoss() const
     return kind_ == EnemyKind::StageTwoBoss || kind_ == EnemyKind::StageThreeBoss || kind_ == EnemyKind::FinalBoss;
 }
 
+bool EnemyTank::isVisible() const
+{
+    return invisibilityTicks_ <= 0 || (aiCounter_ % 8) < 3;
+}
+
+bool EnemyTank::shouldReflectAttack(Direction attackDirection, DamageType damageType) const
+{
+    if (reflectTicks_ <= 0)
+    {
+        return false;
+    }
+
+    if (damageType != DamageType::NormalShell)
+    {
+        return false;
+    }
+
+    return attackDirection != OppositeDirection(direction_);
+}
+
+bool EnemyTank::reflectActive() const
+{
+    return reflectTicks_ > 0;
+}
+
+bool EnemyTank::invisibleActive() const
+{
+    return invisibilityTicks_ > 0;
+}
+
 void EnemyTank::useSkill(Game& game)
 {
     switch (kind_)
     {
     case EnemyKind::LaserGuard:
         setShield(70);
+        if (game.hasLineOfSight(position_, game.playerPosition()))
+        {
+            direction_ = DirectionToward(position_, game.playerPosition());
+        }
         game.fireLaser(position_, direction_, false);
         skillCooldown_ = 95;
         break;
     case EnemyKind::Bomber:
-        game.markDanger(game.randomAround(position_, 5), 24, false);
+        game.throwBomb(position_, Vec2(position_.x, position_.y - 4), false, 6, 24);
+        game.throwBomb(position_, Vec2(position_.x + 4, position_.y), false, 6, 24);
+        game.throwBomb(position_, Vec2(position_.x, position_.y + 4), false, 6, 24);
+        game.throwBomb(position_, Vec2(position_.x - 4, position_.y), false, 6, 24);
         skillCooldown_ = 110;
         break;
     case EnemyKind::StageTwoBoss:
-        setShield(80);
-        game.markDanger(game.playerPosition(), 26, false);
+        game.throwBomb(position_, game.playerPosition(), false, 8, 26);
+        game.machineGun(position_);
         skillCooldown_ = 80;
         break;
     case EnemyKind::StageThreeBoss:
-        game.machineGun(position_);
+        invisibilityTicks_ = 90;
+        reflectTicks_ = 90;
         game.spawnEnemyNear(position_, EnemyKind::LaserGuard);
         skillCooldown_ = 90;
         break;
     case EnemyKind::FinalBoss:
+    {
+        const EnemyKind summonKinds[3] =
+        {
+            EnemyKind::LaserGuard,
+            EnemyKind::Bomber,
+            EnemyKind::Kamikaze
+        };
+        invisibilityTicks_ = 70;
+        reflectTicks_ = 95;
         game.fireLaser(position_, direction_, false);
-        game.markDanger(game.playerPosition(), 22, false);
+        game.throwBomb(position_, game.playerPosition(), false, 10, 22);
         game.machineGun(position_);
-        game.spawnEnemyNear(position_, static_cast<EnemyKind>(2 + std::rand() % 3));
+        game.spawnEnemyNear(position_, summonKinds[std::rand() % 3]);
         game.airStrike();
         setShield(70);
         skillCooldown_ = 105;
         break;
+    }
     default:
         skillCooldown_ = 80;
         break;
@@ -574,5 +662,45 @@ int EnemyTank::fixedFireInterval() const
         return 42;
     default:
         return 85;
+    }
+}
+
+void EnemyTank::updateSuicidePath(Game& game)
+{
+    if (pathRefreshTicks_ <= 0 || cachedPath_.empty())
+    {
+        cachedPath_ = game.findPath(position_, game.playerPosition());
+        pathRefreshTicks_ = 14;
+    }
+    else
+    {
+        --pathRefreshTicks_;
+    }
+
+    if (!cachedPath_.empty())
+    {
+        const Vec2 next = cachedPath_.front();
+        const Vec2 delta = next - position_;
+        Direction chase = direction_;
+        if (delta.x > 0) chase = Direction::Right;
+        else if (delta.x < 0) chase = Direction::Left;
+        else if (delta.y > 0) chase = Direction::Down;
+        else if (delta.y < 0) chase = Direction::Up;
+
+        if (ManhattanDistance(position_, game.playerPosition()) > 1)
+        {
+            if (tryMove(game, chase) && position_ == next)
+            {
+                cachedPath_.erase(cachedPath_.begin());
+            }
+        }
+    }
+    else
+    {
+        Direction chase = DirectionToward(position_, game.playerPosition());
+        if (!tryMove(game, chase))
+        {
+            chooseNewDirection(game, true);
+        }
     }
 }

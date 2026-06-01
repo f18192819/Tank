@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "Entity.h"
 
 class Tank : public Entity
@@ -11,6 +13,8 @@ public:
     EnemyKind enemyKind() const;
     int lives() const;
     int maxLives() const;
+    int bulletSpeed() const;
+    double moveSpeedValue() const;
     bool isShielded() const;
     void setStats(int lives, int fireCooldownTicks, int bulletSpeed, int moveInterval, EnemyKind kind);
     void setShield(int ticks);
@@ -18,7 +22,7 @@ public:
     void reduceFireCooldown();
     bool canFire() const;
     bool takeHit();
-    bool takeDamage(int amount);
+    virtual bool isVisible() const;
     char glyph() const override;
 
 protected:
@@ -70,6 +74,10 @@ public:
     char glyph() const override;
     int scoreValue() const;
     bool isBoss() const;
+    bool isVisible() const override;
+    bool shouldReflectAttack(Direction attackDirection, DamageType damageType) const;
+    bool reflectActive() const;
+    bool invisibleActive() const;
 
 private:
     int aiCounter_;
@@ -78,9 +86,15 @@ private:
     int moveDebt_;
     int turnCooldown_;
     int fireTimer_;
+    int invisibilityTicks_;
+    int reflectTicks_;
+    int chargeTicks_;
+    int pathRefreshTicks_;
+    std::vector<Vec2> cachedPath_;
 
     void useSkill(Game& game);
     void chooseNewDirection(Game& game, bool forcedTurn);
     void chooseTurnCooldown();
     int fixedFireInterval() const;
+    void updateSuicidePath(Game& game);
 };

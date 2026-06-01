@@ -35,6 +35,11 @@ void Renderer::draw(const Game& game)
     if (game.bossMaxLives() > 0)
     {
         output += "  Boss: " + std::to_string(game.bossLives()) + "/" + std::to_string(game.bossMaxLives());
+        const std::string status = game.bossStatusText();
+        if (!status.empty())
+        {
+            output += " [" + status + "]";
+        }
     }
     output += "\nItems  Shield:" + std::to_string(game.shieldCharges());
     output += "  F-Bomb:" + std::to_string(game.bombShells());
