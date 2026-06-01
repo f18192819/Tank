@@ -139,11 +139,11 @@ bool Tank::tryMove(Game& game, Direction direction)
     return false;
 }
 
-void Tank::tryFire(Game& game, bool fromPlayer)
+bool Tank::tryFire(Game& game, bool fromPlayer)
 {
     if (!canFire())
     {
-        return;
+        return false;
     }
 
     const FloatVec2 delta = DirectionFloatDelta(direction_);
@@ -151,17 +151,20 @@ void Tank::tryFire(Game& game, bool fromPlayer)
     if (game.spawnBullet(muzzle, direction_, fromPlayer, bulletSpeed_))
     {
         resetFireCooldown();
+        return true;
     }
+
+    return false;
 }
 
 PlayerTank::PlayerTank(const Vec2& position)
-    : Tank(position, Direction::Up, 10),
+    : Tank(position, Direction::Up, 0),
       bombShells_(0),
       lasers_(0),
       shovels_(0),
-      decoys_(0)
+      mines_(0)
 {
-    setStats(5, 10, 2, 4, EnemyKind::Player);
+    setStats(5, 0, 2, 4, EnemyKind::Player);
     moveSpeed_ = 0.095;
 }
 
@@ -185,9 +188,9 @@ void PlayerTank::addShovel()
     ++shovels_;
 }
 
-void PlayerTank::addDecoy()
+void PlayerTank::addMine()
 {
-    ++decoys_;
+    ++mines_;
 }
 
 int PlayerTank::shields() const
@@ -210,9 +213,9 @@ int PlayerTank::shovels() const
     return shovels_;
 }
 
-int PlayerTank::decoys() const
+int PlayerTank::mines() const
 {
-    return decoys_;
+    return mines_;
 }
 
 void PlayerTank::update(Game& game)
@@ -252,24 +255,28 @@ void PlayerTank::update(Game& game)
         tryMove(game, Direction::Left);
     }
 
-    if ((GetAsyncKeyState(VK_SPACE) & 0x8000) || (GetAsyncKeyState('J') & 0x8000))
+    if (game.consumePlayerFireRequest())
     {
         tryFire(game, true);
     }
 
-    if ((GetAsyncKeyState('F') & 0x8000) && bombShells_ > 0)
+    if (game.consumeBombShellRequest() && bombShells_ > 0)
     {
-        --bombShells_;
-        game.explodeArea(position_ + DirectionDelta(direction_), true);
+        const FloatVec2 delta = DirectionFloatDelta(direction_);
+        const FloatVec2 muzzle(precisePosition_.x + delta.x * 0.58, precisePosition_.y + delta.y * 0.58);
+        if (game.spawnBlastShell(muzzle, direction_, true, bulletSpeed_))
+        {
+            --bombShells_;
+        }
     }
 
-    if ((GetAsyncKeyState('E') & 0x8000) && lasers_ > 0)
+    if (game.consumeLaserRequest() && lasers_ > 0)
     {
         --lasers_;
         game.fireLaser(position_, direction_, true);
     }
 
-    if ((GetAsyncKeyState('Q') & 0x8000) && shovels_ > 0)
+    if (game.consumeShovelRequest() && shovels_ > 0)
     {
         if (game.buildTrench(position_))
         {
@@ -277,15 +284,17 @@ void PlayerTank::update(Game& game)
         }
     }
 
-    if ((GetAsyncKeyState('T') & 0x8000))
+    if (game.consumeTrenchRequest())
     {
         game.tryEnterTrench();
     }
 
-    if ((GetAsyncKeyState('G') & 0x8000) && decoys_ > 0)
+    if (game.consumeMineRequest() && mines_ > 0)
     {
-        --decoys_;
-        game.placeDecoy(position_);
+        if (game.placeMine(position_))
+        {
+            --mines_;
+        }
     }
 }
 

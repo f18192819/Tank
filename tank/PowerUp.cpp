@@ -22,8 +22,8 @@ char PowerUp::glyph() const
         return 'R';
     case PowerUpType::Shovel:
         return 'Q';
-    case PowerUpType::Decoy:
-        return 'H';
+    case PowerUpType::Mine:
+        return 'M';
     default:
         return '?';
     }

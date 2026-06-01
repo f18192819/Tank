@@ -27,7 +27,7 @@ public:
 
 protected:
     bool tryMove(Game& game, Direction direction);
-    void tryFire(Game& game, bool fromPlayer);
+    bool tryFire(Game& game, bool fromPlayer);
 
     Direction direction_;
     int fireCooldown_;
@@ -50,19 +50,19 @@ public:
     void addBombShell();
     void addLaser();
     void addShovel();
-    void addDecoy();
+    void addMine();
     int shields() const;
     int bombShells() const;
     int lasers() const;
     int shovels() const;
-    int decoys() const;
+    int mines() const;
     void update(Game& game) override;
 
 private:
     int bombShells_;
     int lasers_;
     int shovels_;
-    int decoys_;
+    int mines_;
 };
 
 class EnemyTank : public Tank

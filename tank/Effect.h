@@ -8,7 +8,6 @@ enum class EffectType
     Explosion,
     LaserTrace,
     SpawnWarning,
-    Decoy,
     AirStrikeWarning,
     Smoke
 };

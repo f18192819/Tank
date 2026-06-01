@@ -30,7 +30,7 @@ namespace
             "# %%% %%% %%% %%% %%% %%% %%% %%% %%% #",
             "#  %       %       %       %       %   #",
             "# %%% %%% %%% %%% %%% %%% %%% %%% %%% #",
-            "#      %      %    BBB    %      %     #",
+            "#      %      %           %      %     #",
             "#########################################"
         },
         {
@@ -55,7 +55,7 @@ namespace
             "# %%% %%% %%% %%% %%% %%% %%% %%% %%% #",
             "#      %       %   ~   %       %      #",
             "# %%% %%% %%% %%% %%% %%% %%% %%% %%% #",
-            "#   N      %    %  BBB  %    %      N #",
+            "#   N      %    %       %    %      N #",
             "#########################################"
         },
         {
@@ -80,7 +80,7 @@ namespace
             "# %%% %%% %%% %%% %%% %%% %%% %%% %%% #",
             "#      %     ~   %     %   ~     %    #",
             "# %%% %%% %%% %%% %%% %%% %%% %%% %%% #",
-            "#   N   %    %    BBB    %    %   N   #",
+            "#   N   %    %           %    %   N   #",
             "#########################################"
         },
         {
@@ -105,7 +105,7 @@ namespace
             "# %%% %%% %%% %%% %%% %%% %%% %%% %%% #",
             "#   N  %     ~   %     %   ~     %  N #",
             "# %%% %%% %%% %%% %%% %%% %%% %%% %%% #",
-            "#   N   %    %    BBB    %    %   E   #",
+            "#   N   %    %           %    %   E   #",
             "#########################################"
         }
     };
@@ -113,7 +113,8 @@ namespace
 
 GameMap::GameMap()
     : baseDestroyed_(false),
-      currentLevel_(1)
+      currentLevel_(1),
+      version_(0)
 {
     reset();
 }
@@ -142,6 +143,12 @@ void GameMap::loadLevel(int level)
         tiles_.push_back(row);
     }
     baseDestroyed_ = false;
+    ++version_;
+}
+
+int GameMap::version() const
+{
+    return version_;
 }
 
 int GameMap::level() const
@@ -204,12 +211,9 @@ bool GameMap::damageTile(const Vec2& position, bool fromPlayer, DamageType damag
     const Tile tile = tileAt(position);
     if (tile == Tile::WoodenBox)
     {
-        if (fromPlayer || damageType != DamageType::NormalShell)
-        {
-            tiles_[position.y][position.x] = encode(Tile::Empty);
-            return true;
-        }
-        return false;
+        tiles_[position.y][position.x] = encode(Tile::Empty);
+        ++version_;
+        return true;
     }
 
     if (tile == Tile::Base)
@@ -218,6 +222,7 @@ bool GameMap::damageTile(const Vec2& position, bool fromPlayer, DamageType damag
         {
             baseDestroyed_ = true;
             tiles_[position.y][position.x] = 'X';
+            ++version_;
             return true;
         }
         return false;
@@ -234,6 +239,7 @@ bool GameMap::setTrench(const Vec2& position)
     }
 
     tiles_[position.y][position.x] = encode(Tile::Trench);
+    ++version_;
     return true;
 }
 

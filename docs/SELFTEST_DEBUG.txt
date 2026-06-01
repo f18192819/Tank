@@ -3,7 +3,7 @@ Tank Battle self-test
 - Terrain interaction checks complete
 - Power-up pickup and usage checks complete
 - Enemy roster stat uniqueness checks complete
-- Decoy and laser effect checks complete
+- Mine and laser effect checks complete
 - Spawn warning checks complete
 - Stage transition checks complete
 - Advanced enemy and boss skill checks complete

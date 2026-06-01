@@ -11,7 +11,7 @@ The game uses a classic Battle City style: black playfield, gray status border, 
 - `F`: use bomb shell, damaging a 3x3 area
 - `E`: use laser, attacking a whole row or column
 - `Q`: use shovel, turning the current tile into a trench except spawners
-- `G`: place heat decoy for about 15 seconds
+- `G`: place a mine on the current tile
 - `R`: restart
 - `Esc`: pause in game, return/back in menus
 
@@ -30,7 +30,7 @@ Tanks and bullets use continuous floating-point positions for smoother movement.
 
 - Four levels.
 - Five terrain types: trench `T`, crate `%`, wall `#`, swamp `~`, enemy spawners `N/E`.
-- Five power-ups: shield `S`, bomb shell `F`, laser `R`, shovel `Q`, heat decoy `H`.
+- Five power-ups: shield `S`, bomb shell `F`, laser `R`, shovel `Q`, mine `M`.
 - Eight enemy entries: two basic enemies, three advanced enemies, and three bosses.
 - Advanced enemies have special skills.
 - Bosses have two or more skills; the final boss combines laser, bomb summon, machine gun, summon, shield/reflect-like protection, and air strike.
@@ -43,7 +43,7 @@ Tanks and bullets use continuous floating-point positions for smoother movement.
 - `Tank`, `PlayerTank`, `EnemyTank`: tank hierarchy with different stats and AI.
 - `Bullet`: projectile movement and speed.
 - `PowerUp`: collectible items.
-- `TimedEffect`: warning markers, bombs, decoy, air strike effects.
+- `TimedEffect`: warning markers, bombs, explosions, and air strike effects.
 - `Renderer`: console drawing.
 
 Open `tank.sln` in Visual Studio and run Debug x64 or x86. The project subsystem is Windows, so it opens as a graphical window instead of a console.

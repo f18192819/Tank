@@ -1,12 +1,15 @@
 #include "WinApp.h"
 
 #include <windowsx.h>
+#include <mmsystem.h>
 
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "Game.h"
+
+#pragma comment(lib, "winmm.lib")
 
 enum class Screen
 {
@@ -34,9 +37,22 @@ public:
           soundOn_(true),
           showGrid_(true),
           largePixels_(false),
-          selectedButton_(0)
+          selectedButton_(0),
+          mapCacheBitmap_(nullptr),
+          mapCacheVersion_(-1),
+          mapCacheTile_(0),
+          mapCacheW_(0),
+          mapCacheH_(0)
     {
         game_.setDifficulty(difficulty_);
+    }
+
+    ~PixelApp()
+    {
+        if (mapCacheBitmap_)
+        {
+            DeleteObject(mapCacheBitmap_);
+        }
     }
 
     bool create(HINSTANCE instance, int showCommand)
@@ -84,6 +100,11 @@ private:
     int selectedButton_;
     Game game_;
     std::vector<Button> buttons_;
+    HBITMAP mapCacheBitmap_;
+    int mapCacheVersion_;
+    int mapCacheTile_;
+    int mapCacheW_;
+    int mapCacheH_;
 
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
@@ -119,7 +140,7 @@ private:
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         case WM_KEYDOWN:
-            handleKey(wParam);
+            handleKey(wParam, lParam);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         case WM_LBUTTONDOWN:
@@ -137,10 +158,36 @@ private:
         }
     }
 
-    void handleKey(WPARAM key)
+    void handleKey(WPARAM key, LPARAM keyState)
     {
         if (screen_ == Screen::Playing)
         {
+            const bool repeated = (keyState & 0x40000000) != 0;
+            if (!repeated && (key == VK_SPACE || key == 'J'))
+            {
+                game_.queuePlayerFire();
+            }
+            if (!repeated && key == 'F')
+            {
+                game_.queueBombShell();
+            }
+            if (!repeated && key == 'E')
+            {
+                game_.queueLaser();
+            }
+            if (!repeated && key == 'Q')
+            {
+                game_.queueShovel();
+            }
+            if (!repeated && key == 'T')
+            {
+                game_.queueTrenchToggle();
+            }
+            if (!repeated && key == 'G')
+            {
+                game_.queueMine();
+            }
+
             if (key == 'P')
             {
                 screen_ = Screen::Paused;
@@ -335,7 +382,7 @@ private:
         addButton(hdc, 360, 464, 280, 54, L"Quit", 4);
 
         text(hdc, 246, 610, L"WASD move  Arrow keys move  Space/J fire  F bomb  E laser", 18, RGB(154, 169, 164), false);
-        text(hdc, 234, 638, L"Q shovel  T trench  G decoy  P pause  Enter continue/restart  Esc exits", 18, RGB(154, 169, 164), false);
+        text(hdc, 234, 638, L"Q shovel  T trench  G mine  P pause  Enter continue/restart  Esc exits", 18, RGB(154, 169, 164), false);
     }
 
     void drawDifficulty(HDC hdc, const RECT& client)
@@ -386,16 +433,54 @@ private:
         RECT play = {startX, startY, startX + mapWidth, startY + mapHeight};
         fill(hdc, play, RGB(0, 0, 0));
 
+        const int currentVersion = game_.mapVersion();
+        if (mapCacheBitmap_ == nullptr || mapCacheVersion_ != currentVersion || mapCacheTile_ != tile)
+        {
+            rebuildMapCache(hdc, tile, mapWidth, mapHeight);
+            mapCacheVersion_ = currentVersion;
+            mapCacheTile_ = tile;
+        }
+
+        HDC mapDC = CreateCompatibleDC(hdc);
+        HGDIOBJ oldBmp = SelectObject(mapDC, mapCacheBitmap_);
+        BitBlt(hdc, startX, startY, mapWidth, mapHeight, mapDC, 0, 0, SRCCOPY);
+        SelectObject(mapDC, oldBmp);
+        DeleteDC(mapDC);
+
+        drawSmoothEntities(hdc, startX, startY, tile);
+        drawHud(hdc, client);
+    }
+
+    void rebuildMapCache(HDC hdc, int tile, int mapWidth, int mapHeight)
+    {
+        if (mapCacheBitmap_ && (mapCacheW_ != mapWidth || mapCacheH_ != mapHeight))
+        {
+            DeleteObject(mapCacheBitmap_);
+            mapCacheBitmap_ = nullptr;
+        }
+
+        HDC mapDC = CreateCompatibleDC(hdc);
+        if (!mapCacheBitmap_)
+        {
+            mapCacheBitmap_ = CreateCompatibleBitmap(hdc, mapWidth, mapHeight);
+            mapCacheW_ = mapWidth;
+            mapCacheH_ = mapHeight;
+        }
+        HGDIOBJ oldBmp = SelectObject(mapDC, mapCacheBitmap_);
+
+        RECT bg = {0, 0, mapWidth, mapHeight};
+        fill(mapDC, bg, RGB(0, 0, 0));
+
         for (int y = 0; y < GameMap::Height; ++y)
         {
             for (int x = 0; x < GameMap::Width; ++x)
             {
-                drawTile(hdc, startX + x * tile, startY + y * tile, tile, game_.mapGlyphAt(Vec2(x, y)), true);
+                drawTile(mapDC, x * tile, y * tile, tile, game_.mapGlyphAt(Vec2(x, y)), true);
             }
         }
 
-        drawSmoothEntities(hdc, startX, startY, tile);
-        drawHud(hdc, client);
+        SelectObject(mapDC, oldBmp);
+        DeleteDC(mapDC);
     }
 
     void drawHud(HDC hdc, const RECT& client)
@@ -408,12 +493,12 @@ private:
         text(hdc, 172, 4, stream.str(), 22, RGB(255, 255, 255), true);
 
         std::wstringstream items;
-        items << L"S " << game_.shieldCharges()
-            << L"  F " << game_.bombShells()
-            << L"  E " << game_.lasers()
-            << L"  Q " << game_.shovels()
-            << L"  G " << game_.decoys();
-        text(hdc, client.right - 330, 5, items.str(), 20, RGB(255, 255, 255), false);
+        items << L"S " << (game_.shieldCharges() > 0 ? L"ON" : L"OFF")
+            << L"  F x" << game_.bombShells()
+            << L"  E x" << game_.lasers()
+            << L"  Q x" << game_.shovels()
+            << L"  G x" << game_.mines();
+        text(hdc, client.right - 405, 5, items.str(), 20, RGB(255, 255, 255), false);
 
         if (game_.bossMaxLives() > 0)
         {
@@ -470,7 +555,7 @@ private:
         case 'X': base = RGB(180, 55, 44); break;
         case '*': base = RGB(246, 232, 142); break;
         case '!': base = RGB(218, 74, 55); break;
-        case 'S': case 'F': case 'R': case 'Q': case 'H':
+        case 'S': case 'F': case 'R': case 'Q': case 'M':
             drawItemBlock(hdc, x, y, tile, glyph);
             return;
         case '@': case '^': case '>': case 'v': case '<':
@@ -512,6 +597,16 @@ private:
             }
         }
 
+        for (std::size_t i = 0; i < game_.minePositions().size(); ++i)
+        {
+            const Vec2 mine = game_.minePositions()[i];
+            drawTile(hdc,
+                startX + mine.x * tile,
+                startY + mine.y * tile,
+                tile,
+                'M');
+        }
+
         for (std::size_t i = 0; i < game_.effects().size(); ++i)
         {
             const TimedEffect& effect = game_.effects()[i];
@@ -521,10 +616,6 @@ private:
             {
                 drawSpawnWarning(hdc, cx, cy, tile, effect.ticks);
             }
-            else if (effect.type == EffectType::Decoy)
-            {
-                drawDecoyGlow(hdc, cx, cy, tile, effect.ticks);
-            }
             else if (effect.type == EffectType::AirStrikeWarning)
             {
                 drawAirStrikeWarning(hdc, cx, cy, tile, effect.ticks);
@@ -532,6 +623,10 @@ private:
             else if (effect.type == EffectType::LaserTrace)
             {
                 drawLaserTrace(hdc, cx, cy, tile, effect.glyph, effect.fromPlayer);
+            }
+            else if (effect.type == EffectType::Explosion)
+            {
+                drawExplosionBurst(hdc, cx, cy, tile, effect.ticks, effect.totalTicks);
             }
             else
             {
@@ -571,8 +666,15 @@ private:
             {
                 const int cx = startX + static_cast<int>(bullet.precisePosition().x * tile);
                 const int cy = startY + static_cast<int>(bullet.precisePosition().y * tile);
-                RECT r = {cx - tile / 8, cy - tile / 8, cx + tile / 8 + 1, cy + tile / 8 + 1};
-                fill(hdc, r, RGB(255, 255, 255));
+                if (bullet.kind() == BulletKind::Blast)
+                {
+                    drawBlastShellBullet(hdc, cx, cy, tile, bullet.direction());
+                }
+                else
+                {
+                    RECT r = {cx - tile / 8, cy - tile / 8, cx + tile / 8 + 1, cy + tile / 8 + 1};
+                    fill(hdc, r, RGB(255, 255, 255));
+                }
             }
         }
     }
@@ -659,11 +761,89 @@ private:
 
     void drawItemBlock(HDC hdc, int x, int y, int tile, char glyph)
     {
-        RECT r = {x + tile / 5, y + tile / 5, x + tile * 4 / 5, y + tile * 4 / 5};
-        fill(hdc, r, RGB(26, 118, 216));
-        frame(hdc, r, RGB(255, 255, 255), 2);
-        wchar_t label[2] = {static_cast<wchar_t>(glyph), 0};
-        text(hdc, x + tile / 3, y + tile / 4, label, tile / 2, RGB(255, 255, 255), true);
+        RECT r = {x + 2, y + 2, x + tile - 2, y + tile - 2};
+        fill(hdc, r, RGB(20, 28, 42));
+        frame(hdc, r, RGB(235, 235, 235), 2);
+
+        const int cx = x + tile / 2;
+        const int cy = y + tile / 2;
+
+        switch (glyph)
+        {
+        case 'S':
+        {
+            RECT outer = {x + tile / 4, y + tile / 6, x + tile * 3 / 4, y + tile * 4 / 5};
+            RECT inner = {x + tile / 3, y + tile / 4, x + tile * 2 / 3, y + tile * 11 / 16};
+            fill(hdc, outer, RGB(64, 148, 255));
+            fill(hdc, inner, RGB(176, 224, 255));
+            frame(hdc, outer, RGB(255, 255, 255), 2);
+            RECT crest = {cx - tile / 10, y + tile / 5, cx + tile / 10, y + tile / 3};
+            fill(hdc, crest, RGB(255, 255, 255));
+            break;
+        }
+        case 'F':
+        {
+            RECT bomb = {x + tile / 4, y + tile / 4, x + tile * 3 / 4, y + tile * 3 / 4};
+            RECT fuse = {cx - 1, y + tile / 7, cx + 2, y + tile / 4};
+            fill(hdc, bomb, RGB(52, 52, 58));
+            frame(hdc, bomb, RGB(255, 214, 82), 2);
+            fill(hdc, fuse, RGB(222, 170, 72));
+            RECT sparkA = {x + tile * 3 / 4 - 2, y + tile / 8, x + tile * 3 / 4 + 2, y + tile / 8 + 4};
+            RECT sparkB = {x + tile * 3 / 4 + 1, y + tile / 6, x + tile * 3 / 4 + 5, y + tile / 6 + 4};
+            fill(hdc, sparkA, RGB(255, 240, 120));
+            fill(hdc, sparkB, RGB(255, 132, 48));
+            break;
+        }
+        case 'R':
+        {
+            RECT core = {cx - tile / 10, y + tile / 5, cx + tile / 10, y + tile * 4 / 5};
+            fill(hdc, core, RGB(255, 80, 92));
+            RECT beam = {x + tile / 4, cy - tile / 10, x + tile * 3 / 4, cy + tile / 10};
+            fill(hdc, beam, RGB(255, 214, 92));
+            RECT tip = {x + tile * 3 / 4, cy - tile / 6, x + tile * 4 / 5, cy + tile / 6};
+            fill(hdc, tip, RGB(255, 255, 255));
+            break;
+        }
+        case 'Q':
+        {
+            RECT handle = {x + tile / 4, y + tile / 4, x + tile / 3, y + tile * 3 / 4};
+            RECT blade = {x + tile / 3, y + tile / 2 - 2, x + tile * 3 / 4, y + tile * 3 / 4};
+            fill(hdc, handle, RGB(136, 90, 52));
+            fill(hdc, blade, RGB(214, 220, 224));
+            frame(hdc, blade, RGB(255, 255, 255), 1);
+            RECT cap = {x + tile / 5, y + tile / 5, x + tile / 3, y + tile / 3};
+            frame(hdc, cap, RGB(214, 220, 224), 2);
+            break;
+        }
+        case 'M':
+        {
+            RECT plate = {x + tile / 4, y + tile / 3, x + tile * 3 / 4, y + tile * 2 / 3};
+            RECT button = {cx - tile / 10, cy - tile / 10, cx + tile / 10, cy + tile / 10};
+            fill(hdc, plate, RGB(58, 64, 58));
+            frame(hdc, plate, RGB(255, 214, 82), 2);
+            fill(hdc, button, RGB(220, 58, 48));
+            HPEN prong = CreatePen(PS_SOLID, 2, RGB(235, 235, 210));
+            HGDIOBJ oldPen = SelectObject(hdc, prong);
+            MoveToEx(hdc, x + tile / 4, y + tile / 3, nullptr);
+            LineTo(hdc, x + tile / 6, y + tile / 5);
+            MoveToEx(hdc, x + tile * 3 / 4, y + tile / 3, nullptr);
+            LineTo(hdc, x + tile * 5 / 6, y + tile / 5);
+            MoveToEx(hdc, x + tile / 4, y + tile * 2 / 3, nullptr);
+            LineTo(hdc, x + tile / 6, y + tile * 4 / 5);
+            MoveToEx(hdc, x + tile * 3 / 4, y + tile * 2 / 3, nullptr);
+            LineTo(hdc, x + tile * 5 / 6, y + tile * 4 / 5);
+            SelectObject(hdc, oldPen);
+            DeleteObject(prong);
+            break;
+        }
+        default:
+        {
+            RECT inner = {x + tile / 4, y + tile / 4, x + tile * 3 / 4, y + tile * 3 / 4};
+            fill(hdc, inner, RGB(26, 118, 216));
+            frame(hdc, inner, RGB(255, 255, 255), 2);
+            break;
+        }
+        }
     }
 
     void drawExplosionMark(HDC hdc, int cx, int cy, int tile)
@@ -681,6 +861,52 @@ private:
         DeleteObject(pink);
     }
 
+    void drawExplosionBurst(HDC hdc, int cx, int cy, int tile, int ticks, int totalTicks)
+    {
+        const int age = totalTicks - ticks;
+        const int outer = tile / 2 - age * tile / 24;
+        const int inner = tile / 4 + age * tile / 20;
+        RECT fire = {cx - outer, cy - outer, cx + outer, cy + outer};
+        RECT core = {cx - inner, cy - inner, cx + inner, cy + inner};
+        fill(hdc, fire, RGB(240, 76, 36));
+        fill(hdc, core, RGB(255, 218, 82));
+
+        HPEN smoke = CreatePen(PS_SOLID, 2, RGB(80, 80, 76));
+        HGDIOBJ oldPen = SelectObject(hdc, smoke);
+        MoveToEx(hdc, cx - outer, cy, nullptr);
+        LineTo(hdc, cx + outer, cy);
+        MoveToEx(hdc, cx, cy - outer, nullptr);
+        LineTo(hdc, cx, cy + outer);
+        SelectObject(hdc, oldPen);
+        DeleteObject(smoke);
+    }
+
+    void drawBlastShellBullet(HDC hdc, int cx, int cy, int tile, Direction direction)
+    {
+        const int longRadius = tile / 5;
+        const int shortRadius = tile / 9;
+        RECT body;
+        RECT flame;
+        if (direction == Direction::Left || direction == Direction::Right)
+        {
+            body = {cx - longRadius, cy - shortRadius, cx + longRadius, cy + shortRadius};
+            const int flameX = direction == Direction::Right ? cx - longRadius - tile / 8 : cx + longRadius;
+            flame = {flameX, cy - shortRadius, flameX + tile / 8, cy + shortRadius};
+        }
+        else
+        {
+            body = {cx - shortRadius, cy - longRadius, cx + shortRadius, cy + longRadius};
+            const int flameY = direction == Direction::Down ? cy - longRadius - tile / 8 : cy + longRadius;
+            flame = {cx - shortRadius, flameY, cx + shortRadius, flameY + tile / 8};
+        }
+
+        fill(hdc, body, RGB(46, 46, 52));
+        frame(hdc, body, RGB(255, 210, 70), 2);
+        fill(hdc, flame, RGB(255, 104, 38));
+        RECT core = {cx - tile / 14, cy - tile / 14, cx + tile / 14, cy + tile / 14};
+        fill(hdc, core, RGB(255, 244, 150));
+    }
+
     void drawSpawnWarning(HDC hdc, int cx, int cy, int tile, int ticks)
     {
         const COLORREF color = (ticks / 3) % 2 == 0 ? RGB(255, 90, 90) : RGB(255, 230, 120);
@@ -692,16 +918,6 @@ private:
         SelectObject(hdc, oldBrush);
         SelectObject(hdc, oldPen);
         DeleteObject(pen);
-    }
-
-    void drawDecoyGlow(HDC hdc, int cx, int cy, int tile, int ticks)
-    {
-        const COLORREF core = (ticks / 5) % 2 == 0 ? RGB(255, 180, 70) : RGB(255, 240, 120);
-        RECT outer = {cx - tile / 3, cy - tile / 3, cx + tile / 3, cy + tile / 3};
-        RECT inner = {cx - tile / 6, cy - tile / 6, cx + tile / 6, cy + tile / 6};
-        fill(hdc, outer, RGB(100, 42, 16));
-        fill(hdc, inner, core);
-        frame(hdc, outer, RGB(255, 255, 255), 2);
     }
 
     void drawAirStrikeWarning(HDC hdc, int cx, int cy, int tile, int ticks)
@@ -938,6 +1154,8 @@ private:
 
 int RunWinApp(HINSTANCE instance, int showCommand)
 {
+    timeBeginPeriod(1);
+
     wchar_t selfTestFlag[8] = {};
     if (GetEnvironmentVariableW(L"TANK_SELFTEST", selfTestFlag, 8) > 0)
     {
@@ -970,6 +1188,7 @@ int RunWinApp(HINSTANCE instance, int showCommand)
     PixelApp app;
     if (!app.create(instance, showCommand))
     {
+        timeEndPeriod(1);
         return 1;
     }
 
@@ -980,5 +1199,6 @@ int RunWinApp(HINSTANCE instance, int showCommand)
         DispatchMessage(&message);
     }
 
+    timeEndPeriod(1);
     return static_cast<int>(message.wParam);
 }

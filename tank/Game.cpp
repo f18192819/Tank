@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <set>
 #include <sstream>
@@ -20,11 +21,15 @@ Game::Game()
       spawnTick_(0),
       powerUpTick_(0),
       playerMoveSkip_(0),
-      decoyTicks_(0),
-      decoyPosition_(Vec2()),
       difficulty_(Difficulty::Normal),
       frameAccumulator_(0),
-      playerInTrench_(false)
+      playerInTrench_(false),
+      playerFireQueued_(false),
+      bombShellQueued_(false),
+      laserQueued_(false),
+      shovelQueued_(false),
+      trenchQueued_(false),
+      mineQueued_(false)
 {
     std::srand(static_cast<unsigned int>(std::time(nullptr)));
     reset();
@@ -65,15 +70,21 @@ void Game::reset()
     powerUps_.clear();
     effects_.clear();
     pendingSpawns_.clear();
+    mines_.clear();
     state_ = GameState::Running;
     score_ = 0;
     wave_ = 1;
     spawnTick_ = 0;
     powerUpTick_ = 0;
     playerMoveSkip_ = 0;
-    decoyTicks_ = 0;
     frameAccumulator_ = 0;
     playerInTrench_ = false;
+    playerFireQueued_ = false;
+    bombShellQueued_ = false;
+    laserQueued_ = false;
+    shovelQueued_ = false;
+    trenchQueued_ = false;
+    mineQueued_ = false;
     spawnWave();
 }
 
@@ -95,6 +106,12 @@ void Game::advanceStage()
     powerUpTick_ = 0;
     playerMoveSkip_ = 0;
     playerInTrench_ = false;
+    playerFireQueued_ = false;
+    bombShellQueued_ = false;
+    laserQueued_ = false;
+    shovelQueued_ = false;
+    trenchQueued_ = false;
+    mineQueued_ = false;
     spawnWave();
     state_ = GameState::Running;
 }
@@ -155,24 +172,18 @@ bool Game::spawnBullet(const Vec2& position, Direction direction, bool fromPlaye
 
 bool Game::spawnBullet(const FloatVec2& position, Direction direction, bool fromPlayer, int speed)
 {
-    const Vec2 cell = ToCell(position);
-    if (!map_.inBounds(cell))
-    {
-        return false;
-    }
+    return spawnBullet(position, direction, fromPlayer, speed, BulletKind::Normal);
+}
 
-    if (map_.isBulletBlocked(cell))
-    {
-        if (fromPlayer || map_.tileAt(cell) != Tile::Crate)
-        {
-            map_.damageTile(cell, fromPlayer, DamageType::NormalShell);
-        }
-
-        return true;
-    }
-
-    bullets_.push_back(std::unique_ptr<Bullet>(new Bullet(position, direction, fromPlayer, speed)));
+bool Game::spawnBullet(const FloatVec2& position, Direction direction, bool fromPlayer, int speed, BulletKind kind)
+{
+    bullets_.push_back(std::unique_ptr<Bullet>(new Bullet(position, direction, fromPlayer, speed, kind)));
     return true;
+}
+
+bool Game::spawnBlastShell(const FloatVec2& position, Direction direction, bool fromPlayer, int speed)
+{
+    return spawnBullet(position, direction, fromPlayer, speed, BulletKind::Blast);
 }
 
 bool Game::resolveBulletHit(const Bullet& bullet, const Vec2& target)
@@ -184,11 +195,14 @@ bool Game::resolveBulletHit(const Bullet& bullet, const Vec2& target)
 
     if (map_.isBulletBlocked(target))
     {
-        if (bullet.fromPlayer() || map_.tileAt(target) != Tile::Crate)
+        if (bullet.kind() == BulletKind::Blast)
+        {
+            explodeArea(target, bullet.fromPlayer());
+        }
+        else
         {
             map_.damageTile(target, bullet.fromPlayer(), DamageType::NormalShell);
         }
-
         return true;
     }
 
@@ -197,19 +211,149 @@ bool Game::resolveBulletHit(const Bullet& bullet, const Vec2& target)
         return false;
     }
 
-    damageTankAt(target, bullet.fromPlayer(), DamageType::NormalShell, bullet.direction());
+    if (bullet.kind() == BulletKind::Blast)
+    {
+        if (!map_.isPassable(target) || isOccupiedByEnemyTank(target, bullet.fromPlayer()))
+        {
+            explodeArea(target, bullet.fromPlayer());
+            return true;
+        }
+    }
+    else
+    {
+        damageTankAt(target, bullet.fromPlayer(), DamageType::NormalShell, bullet.direction());
+    }
 
     for (std::size_t i = 0; i < bullets_.size(); ++i)
     {
         Bullet* other = bullets_[i].get();
         if (&bullet != other && other->isAlive() && other->position() == target)
         {
-            other->destroy();
+            if (bullet.kind() == BulletKind::Blast && other->kind() != BulletKind::Blast)
+            {
+                other->destroy();
+                return false;
+            }
+
+            if (bullet.kind() != BulletKind::Blast && other->kind() == BulletKind::Blast)
+            {
+                return true;
+            }
+
+            if (bullet.kind() != BulletKind::Blast || other->kind() != BulletKind::Blast)
+            {
+                other->destroy();
+                return true;
+            }
+        }
+    }
+
+    return !map_.isPassable(target) || isOccupiedByEnemyTank(target, bullet.fromPlayer());
+}
+
+bool Game::resolveBulletHit(const Bullet& bullet, const FloatVec2& preciseTarget)
+{
+    if (bullet.kind() == BulletKind::Blast)
+    {
+        Vec2 tankHit;
+        if (findBlastTankHit(bullet, preciseTarget, tankHit))
+        {
+            explodeArea(tankHit, bullet.fromPlayer());
             return true;
         }
     }
 
-    return !map_.isPassable(target) || isOccupiedByTank(target, nullptr);
+    return resolveBulletHit(bullet, ToCell(preciseTarget));
+}
+
+void Game::queuePlayerFire()
+{
+    if (state_ == GameState::Running && player_.isAlive())
+    {
+        playerFireQueued_ = true;
+    }
+}
+
+bool Game::consumePlayerFireRequest()
+{
+    const bool queued = playerFireQueued_;
+    playerFireQueued_ = false;
+    return queued;
+}
+
+void Game::queueBombShell()
+{
+    if (state_ == GameState::Running && player_.isAlive())
+    {
+        bombShellQueued_ = true;
+    }
+}
+
+bool Game::consumeBombShellRequest()
+{
+    const bool queued = bombShellQueued_;
+    bombShellQueued_ = false;
+    return queued;
+}
+
+void Game::queueLaser()
+{
+    if (state_ == GameState::Running && player_.isAlive())
+    {
+        laserQueued_ = true;
+    }
+}
+
+bool Game::consumeLaserRequest()
+{
+    const bool queued = laserQueued_;
+    laserQueued_ = false;
+    return queued;
+}
+
+void Game::queueShovel()
+{
+    if (state_ == GameState::Running && player_.isAlive())
+    {
+        shovelQueued_ = true;
+    }
+}
+
+bool Game::consumeShovelRequest()
+{
+    const bool queued = shovelQueued_;
+    shovelQueued_ = false;
+    return queued;
+}
+
+void Game::queueTrenchToggle()
+{
+    if (state_ == GameState::Running && player_.isAlive())
+    {
+        trenchQueued_ = true;
+    }
+}
+
+bool Game::consumeTrenchRequest()
+{
+    const bool queued = trenchQueued_;
+    trenchQueued_ = false;
+    return queued;
+}
+
+void Game::queueMine()
+{
+    if (state_ == GameState::Running && player_.isAlive())
+    {
+        mineQueued_ = true;
+    }
+}
+
+bool Game::consumeMineRequest()
+{
+    const bool queued = mineQueued_;
+    mineQueued_ = false;
+    return queued;
 }
 
 bool Game::buildTrench(const Vec2& position)
@@ -236,6 +380,7 @@ bool Game::tryEnterTrench()
 
 void Game::explodeArea(const Vec2& center, bool fromPlayer)
 {
+    createExplosionEffect(center, fromPlayer);
     for (int y = center.y - 1; y <= center.y + 1; ++y)
     {
         for (int x = center.x - 1; x <= center.x + 1; ++x)
@@ -279,16 +424,23 @@ void Game::throwBomb(const Vec2& from, const Vec2& toward, bool fromPlayer, int 
     effects_.push_back(TimedEffect(landing, warningTicks, fromPlayer, '!', true, EffectType::Warning, DamageType::BombExplosion));
 }
 
-void Game::placeDecoy(const Vec2& position)
+bool Game::placeMine(const Vec2& position)
 {
     if (!map_.isPassable(position))
     {
-        return;
+        return false;
     }
 
-    decoyPosition_ = position;
-    decoyTicks_ = 15 * 14;
-    effects_.push_back(TimedEffect(position, decoyTicks_, true, 'H', false, EffectType::Decoy, DamageType::NormalShell));
+    for (std::size_t i = 0; i < mines_.size(); ++i)
+    {
+        if (mines_[i] == position)
+        {
+            return false;
+        }
+    }
+
+    mines_.push_back(position);
+    return true;
 }
 
 void Game::machineGun(const Vec2& center)
@@ -350,13 +502,7 @@ Vec2 Game::randomAround(const Vec2& center, int radius) const
 
 Vec2 Game::enemyAttractedTarget(const Vec2& enemyPosition) const
 {
-    if (decoyTicks_ > 0 &&
-        IsAligned(enemyPosition, decoyPosition_) &&
-        map_.hasLineOfSightOrthogonal(enemyPosition, decoyPosition_))
-    {
-        return decoyPosition_;
-    }
-
+    (void)enemyPosition;
     return player_.position();
 }
 
@@ -444,9 +590,9 @@ int Game::shovels() const
     return player_.shovels();
 }
 
-int Game::decoys() const
+int Game::mines() const
 {
-    return player_.decoys();
+    return player_.mines();
 }
 
 int Game::shieldCharges() const
@@ -621,6 +767,7 @@ bool Game::runSelfTest(std::string& report)
     expect(terrainGlyphs.count('#') > 0, "Wall terrain not found");
     expect(terrainGlyphs.count('~') > 0, "Swamp terrain not found");
     expect(terrainGlyphs.count('N') > 0 && terrainGlyphs.count('E') > 0, "Spawn point terrain not found");
+    expect(terrainGlyphs.count('B') == 0, "Base tile should not appear on any level");
     log << "- Levels and terrain scan complete\n";
 
     map_.loadLevel(1);
@@ -628,13 +775,11 @@ bool Game::runSelfTest(std::string& report)
     const Vec2 box = findFirstTile(Tile::WoodenBox);
     const Vec2 wall = findFirstTile(Tile::Wall);
     const Vec2 normalSpawner = findFirstTile(Tile::NormalSpawnPoint);
-    const Vec2 baseTile = findFirstTile(Tile::Base);
     const Vec2 swamp = findFirstTile(Tile::Swamp);
     expect(trench.x >= 0, "Unable to locate trench tile for test");
     expect(box.x >= 0, "Unable to locate wooden box tile for test");
     expect(wall.x >= 0, "Unable to locate wall tile for test");
     expect(normalSpawner.x >= 0, "Unable to locate spawn tile for test");
-    expect(baseTile.x >= 0, "Unable to locate base tile for test");
     expect(swamp.x >= 0, "Unable to locate swamp tile for test");
 
     if (trench.x >= 0)
@@ -653,8 +798,9 @@ bool Game::runSelfTest(std::string& report)
     if (box.x >= 0)
     {
         map_.loadLevel(1);
-        expect(!map_.damageTile(box, false, DamageType::NormalShell), "Enemy normal shell should not break wooden box");
-        expect(map_.tileAt(box) == Tile::WoodenBox, "Wooden box changed after enemy normal shell");
+        expect(map_.damageTile(box, false, DamageType::NormalShell), "Enemy normal shell should break wooden box");
+        expect(map_.tileAt(box) == Tile::Empty, "Wooden box not cleared after enemy normal shell");
+        map_.loadLevel(1);
         expect(map_.damageTile(box, true, DamageType::NormalShell), "Player normal shell should break wooden box");
         expect(map_.tileAt(box) == Tile::Empty, "Wooden box not cleared after player damage");
     }
@@ -684,15 +830,26 @@ bool Game::runSelfTest(std::string& report)
     powerUps_.push_back(std::unique_ptr<PowerUp>(new PowerUp(player_.position(), PowerUpType::BombShell)));
     powerUps_.push_back(std::unique_ptr<PowerUp>(new PowerUp(player_.position(), PowerUpType::Laser)));
     powerUps_.push_back(std::unique_ptr<PowerUp>(new PowerUp(player_.position(), PowerUpType::Shovel)));
-    powerUps_.push_back(std::unique_ptr<PowerUp>(new PowerUp(player_.position(), PowerUpType::Decoy)));
+    powerUps_.push_back(std::unique_ptr<PowerUp>(new PowerUp(player_.position(), PowerUpType::Mine)));
     collectPowerUps();
     expect(player_.isShielded(), "Shield power-up was not collected");
     expect(player_.bombShells() == 1, "Bomb shell power-up was not collected");
     expect(player_.lasers() == 1, "Laser power-up was not collected");
     expect(player_.shovels() == 1, "Shovel power-up was not collected");
-    expect(player_.decoys() == 1, "Decoy power-up was not collected");
+    expect(player_.mines() == 1, "Mine power-up was not collected");
+
+    for (int i = 0; i < 240; ++i)
+    {
+        player_.reduceFireCooldown();
+    }
+    expect(!player_.isShielded(), "Shield did not expire after its duration");
+    expect(player_.bombShells() == 1, "Bomb shell inventory expired without use");
+    expect(player_.lasers() == 1, "Laser inventory expired without use");
+    expect(player_.shovels() == 1, "Shovel inventory expired without use");
+    expect(player_.mines() == 1, "Mine inventory expired without use");
 
     const int shieldedLives = player_.lives();
+    player_.addShield(160);
     damageTankAt(player_.position(), false, DamageType::NormalShell, Direction::Up);
     expect(player_.lives() == shieldedLives, "Shield did not block first normal hit");
     damageTankAt(player_.position(), false, DamageType::NormalShell, Direction::Up);
@@ -704,6 +861,78 @@ bool Game::runSelfTest(std::string& report)
         explodeArea(box, true);
         expect(map_.tileAt(box) == Tile::Empty, "Bomb-style area attack did not destroy wooden box");
     }
+
+    map_.loadLevel(1);
+    effects_.clear();
+    bullets_.clear();
+    Vec2 blastLaunch(-1, -1);
+    Vec2 blastTarget(-1, -1);
+    for (int y = 1; y < GameMap::Height - 1 && blastLaunch.x < 0; ++y)
+    {
+        for (int x = 1; x < GameMap::Width - 2 && blastLaunch.x < 0; ++x)
+        {
+            const Vec2 launch(x, y);
+            const Vec2 target(x + 1, y);
+            if (map_.isPassable(launch) && !map_.isSpawner(launch) && map_.tileAt(target) == Tile::WoodenBox)
+            {
+                blastLaunch = launch;
+                blastTarget = target;
+            }
+        }
+    }
+    expect(blastLaunch.x >= 0, "Unable to locate blast shell launch lane");
+    if (blastLaunch.x >= 0)
+    {
+        spawnBlastShell(FloatVec2(blastLaunch), Direction::Right, true, 2);
+        expect(!bullets_.empty() && bullets_[0]->kind() == BulletKind::Blast, "Blast shell did not spawn as a distinct bullet");
+        for (int i = 0; i < 8 && !bullets_.empty(); ++i)
+        {
+            bullets_[0]->update(*this);
+            removeDeadEntities();
+        }
+        expect(map_.tileAt(blastTarget) == Tile::Empty, "Flying blast shell did not destroy impact wooden box");
+        bool sawBlastEffect = false;
+        for (std::size_t i = 0; i < effects_.size(); ++i)
+        {
+            if (effects_[i].type == EffectType::Explosion)
+            {
+                sawBlastEffect = true;
+                break;
+            }
+        }
+        expect(sawBlastEffect, "Blast shell impact did not create explosion effect");
+    }
+
+    map_.loadLevel(1);
+    effects_.clear();
+    bullets_.clear();
+    enemies_.clear();
+    const Vec2 enemyTarget(8, 8);
+    enemies_.push_back(std::unique_ptr<EnemyTank>(new EnemyTank(enemyTarget, EnemyKind::Scout, 1357)));
+    Bullet blastProbe(FloatVec2(Vec2(6, 8)), Direction::Right, true, 2, BulletKind::Blast);
+    resolveBulletHit(blastProbe, FloatVec2(enemyTarget));
+    bool sawEnemyBlastEffect = false;
+    for (std::size_t i = 0; i < effects_.size(); ++i)
+    {
+        if (effects_[i].type == EffectType::Explosion && effects_[i].position == enemyTarget)
+        {
+            sawEnemyBlastEffect = true;
+            break;
+        }
+    }
+    expect(sawEnemyBlastEffect, "Blast shell impact on enemy did not create centered explosion effect");
+
+    bullets_.clear();
+    bullets_.push_back(std::unique_ptr<Bullet>(new Bullet(FloatVec2(Vec2(10, 10)), Direction::Right, true, 2, BulletKind::Blast)));
+    bullets_.push_back(std::unique_ptr<Bullet>(new Bullet(FloatVec2(Vec2(10, 10)), Direction::Left, false, 2, BulletKind::Normal)));
+    resolveBulletCollisions();
+    expect(bullets_[0]->isAlive(), "Blast shell should not be cancelled by a normal enemy bullet");
+    expect(!bullets_[1]->isAlive(), "Normal enemy bullet should be cancelled when hitting a blast shell");
+    bullets_.clear();
+    bullets_.push_back(std::unique_ptr<Bullet>(new Bullet(FloatVec2(Vec2(12, 10)), Direction::Left, false, 2, BulletKind::Normal)));
+    bullets_.push_back(std::unique_ptr<Bullet>(new Bullet(FloatVec2(Vec2(11, 10)), Direction::Right, true, 2, BulletKind::Blast)));
+    expect(resolveBulletHit(*bullets_[0], Vec2(11, 10)), "Normal bullet should stop when it hits a blast shell");
+    expect(bullets_[1]->isAlive(), "Blast shell should remain alive after being hit by a normal bullet");
 
     map_.loadLevel(1);
     const Vec2 trenchBuildCell = map_.randomOpenCell();
@@ -722,37 +951,47 @@ bool Game::runSelfTest(std::string& report)
     }
     expect(sawPlayerLaserTrace, "Laser power-up usage did not create player laser trace");
 
-    Vec2 decoyCell(-1, -1);
-    Vec2 alignedEnemy(-1, -1);
-    for (int y = 1; y < GameMap::Height - 1 && decoyCell.x < 0; ++y)
+    Vec2 mineCell(-1, -1);
+    for (int y = 1; y < GameMap::Height - 1 && mineCell.x < 0; ++y)
     {
-        for (int x = 1; x < GameMap::Width - 1 && decoyCell.x < 0; ++x)
+        for (int x = 1; x < GameMap::Width - 1 && mineCell.x < 0; ++x)
         {
             const Vec2 candidate(x, y);
-            if (!map_.isPassable(candidate) || map_.isSpawner(candidate))
+            if (map_.isPassable(candidate) && !map_.isSpawner(candidate))
             {
-                continue;
-            }
-
-            const Vec2 targetA(x, y - 2);
-            const Vec2 targetB(x, y + 2);
-            if (map_.inBounds(targetA) && map_.isPassable(targetA) && map_.hasLineOfSightOrthogonal(candidate, targetA))
-            {
-                decoyCell = candidate;
-                alignedEnemy = targetA;
-            }
-            else if (map_.inBounds(targetB) && map_.isPassable(targetB) && map_.hasLineOfSightOrthogonal(candidate, targetB))
-            {
-                decoyCell = candidate;
-                alignedEnemy = targetB;
+                mineCell = candidate;
             }
         }
     }
-    expect(decoyCell.x >= 0, "Unable to find valid decoy test cell");
-    if (decoyCell.x >= 0)
+    expect(mineCell.x >= 0, "Unable to find valid mine test cell");
+    if (mineCell.x >= 0)
     {
-        placeDecoy(decoyCell);
-        expect(enemyAttractedTarget(alignedEnemy) == decoyCell, "Decoy usage did not retarget aligned enemy");
+        const int mineInventory = player_.mines();
+        expect(placeMine(mineCell), "Mine placement failed on passable cell");
+        expect(!placeMine(mineCell), "Duplicate mine placement should fail");
+        const Vec2 keyedMineCell = map_.randomOpenCell();
+        player_ = PlayerTank(keyedMineCell);
+        player_.addMine();
+        player_.addMine();
+        queueMine();
+        player_.update(*this);
+        expect(player_.mines() == 1, "Single mine key press should consume exactly one mine");
+        expect(mineInventory == 1, "Mine pickup count changed unexpectedly before direct placement test");
+
+        enemies_.clear();
+        effects_.clear();
+        enemies_.push_back(std::unique_ptr<EnemyTank>(new EnemyTank(mineCell, EnemyKind::Scout, 9753)));
+        triggerMines();
+        bool sawMineExplosion = false;
+        for (std::size_t i = 0; i < effects_.size(); ++i)
+        {
+            if (effects_[i].type == EffectType::Explosion && effects_[i].position == mineCell)
+            {
+                sawMineExplosion = true;
+                break;
+            }
+        }
+        expect(sawMineExplosion, "Mine did not explode when an enemy stepped on it");
     }
     log << "- Power-up pickup and usage checks complete\n";
 
@@ -810,11 +1049,6 @@ bool Game::runSelfTest(std::string& report)
     expect(!enemies_.empty() && enemies_[0]->isShielded(), "LaserGuard did not refresh shield");
     expect(sawGuardLaser, "LaserGuard did not fire line laser");
 
-    reset();
-    placeDecoy(player_.position());
-    const Vec2 decoyTarget = enemyAttractedTarget(Vec2(player_.position().x, 1));
-    expect(decoyTarget == player_.position(), "Decoy did not attract aligned enemy to player cell");
-
     effects_.clear();
     fireLaser(Vec2(5, 5), Direction::Right, true);
     bool sawLaserTrace = false;
@@ -827,7 +1061,7 @@ bool Game::runSelfTest(std::string& report)
         }
     }
     expect(sawLaserTrace, "Laser trace effect was not created");
-    log << "- Decoy and laser effect checks complete\n";
+    log << "- Mine and laser effect checks complete\n";
 
     reset();
     enemies_.clear();
@@ -928,14 +1162,6 @@ bool Game::runSelfTest(std::string& report)
     log << "- Stage transition checks complete\n";
 
     reset();
-    if (baseTile.x >= 0)
-    {
-        map_.damageTile(baseTile, false, DamageType::BombExplosion);
-        checkGameState();
-        expect(state_ == GameState::Defeat, "Base destruction did not trigger defeat");
-    }
-
-    reset();
     const int startingLives = player_.lives();
     for (int i = 0; i < startingLives; ++i)
     {
@@ -1024,6 +1250,11 @@ const std::vector<TimedEffect>& Game::effects() const
     return effects_;
 }
 
+const std::vector<Vec2>& Game::minePositions() const
+{
+    return mines_;
+}
+
 const PlayerTank& Game::player() const
 {
     return player_;
@@ -1032,6 +1263,11 @@ const PlayerTank& Game::player() const
 char Game::mapGlyphAt(const Vec2& position) const
 {
     return map_.glyphAt(position);
+}
+
+int Game::mapVersion() const
+{
+    return map_.version();
 }
 
 void Game::draw(std::vector<std::string>& buffer) const
@@ -1044,6 +1280,14 @@ void Game::draw(std::vector<std::string>& buffer) const
         if (powerUp.isAlive() && map_.inBounds(powerUp.position()))
         {
             buffer[powerUp.position().y][powerUp.position().x] = powerUp.glyph();
+        }
+    }
+
+    for (std::size_t i = 0; i < mines_.size(); ++i)
+    {
+        if (map_.inBounds(mines_[i]))
+        {
+            buffer[mines_[i].y][mines_[i].x] = 'M';
         }
     }
 
@@ -1112,6 +1356,7 @@ void Game::update()
             enemies_[i]->update(*this);
         }
     }
+    triggerMines();
 
     const std::size_t bulletCount = bullets_.size();
     for (std::size_t i = 0; i < bulletCount; ++i)
@@ -1121,6 +1366,8 @@ void Game::update()
             bullets_[i]->update(*this);
         }
     }
+
+    resolveBulletCollisions();
 
     updateEffects();
     updatePendingSpawns();
@@ -1141,15 +1388,6 @@ void Game::update()
     {
         powerUpTick_ = 0;
         spawnPowerUp();
-    }
-
-    if (decoyTicks_ > 0)
-    {
-        --decoyTicks_;
-    }
-    else
-    {
-        decoyPosition_ = Vec2();
     }
 
     removeDeadEntities();
@@ -1191,6 +1429,7 @@ void Game::spawnWave()
     effects_.clear();
     pendingSpawns_.clear();
     powerUps_.clear();
+    mines_.clear();
 
     spawnEnemyNear(Vec2(3, 1), EnemyKind::Scout);
     spawnEnemyNear(Vec2(GameMap::Width - 4, 1), EnemyKind::Armor);
@@ -1366,12 +1605,80 @@ void Game::collectPowerUps()
             case PowerUpType::Shovel:
                 player_.addShovel();
                 break;
-            case PowerUpType::Decoy:
-                player_.addDecoy();
+            case PowerUpType::Mine:
+                player_.addMine();
                 break;
             }
 
             powerUps_[i]->destroy();
+        }
+    }
+}
+
+void Game::triggerMines()
+{
+    for (std::size_t mineIndex = 0; mineIndex < mines_.size();)
+    {
+        bool triggered = false;
+        for (std::size_t enemyIndex = 0; enemyIndex < enemies_.size(); ++enemyIndex)
+        {
+            if (enemies_[enemyIndex]->isAlive() && enemies_[enemyIndex]->position() == mines_[mineIndex])
+            {
+                triggered = true;
+                break;
+            }
+        }
+
+        if (triggered)
+        {
+            const Vec2 center = mines_[mineIndex];
+            mines_.erase(mines_.begin() + mineIndex);
+            explodeArea(center, true);
+        }
+        else
+        {
+            ++mineIndex;
+        }
+    }
+}
+
+void Game::resolveBulletCollisions()
+{
+    for (std::size_t i = 0; i < bullets_.size(); ++i)
+    {
+        Bullet* first = bullets_[i].get();
+        if (!first->isAlive())
+        {
+            continue;
+        }
+
+        for (std::size_t j = i + 1; j < bullets_.size(); ++j)
+        {
+            Bullet* second = bullets_[j].get();
+            if (!second->isAlive())
+            {
+                continue;
+            }
+
+            if (first->position() == second->position() ||
+                (first->previousPosition() == second->position() &&
+                 second->previousPosition() == first->position()))
+            {
+                if (first->kind() == BulletKind::Blast && second->kind() != BulletKind::Blast)
+                {
+                    second->destroy();
+                }
+                else if (first->kind() != BulletKind::Blast && second->kind() == BulletKind::Blast)
+                {
+                    first->destroy();
+                }
+                else if (first->kind() != BulletKind::Blast || second->kind() != BulletKind::Blast)
+                {
+                    first->destroy();
+                    second->destroy();
+                }
+                break;
+            }
         }
     }
 }
@@ -1399,6 +1706,63 @@ void Game::removeDeadEntities()
         effects_.end());
 }
 
+void Game::createExplosionEffect(const Vec2& center, bool fromPlayer)
+{
+    for (int y = center.y - 1; y <= center.y + 1; ++y)
+    {
+        for (int x = center.x - 1; x <= center.x + 1; ++x)
+        {
+            const Vec2 position(x, y);
+            if (map_.inBounds(position))
+            {
+                effects_.push_back(TimedEffect(position, 8, fromPlayer, 'X', false, EffectType::Explosion, DamageType::BombExplosion));
+            }
+        }
+    }
+}
+
+bool Game::findBlastTankHit(const Bullet& bullet, const FloatVec2& preciseTarget, Vec2& hitCenter) const
+{
+    const double radius = 0.47;
+    if (bullet.fromPlayer())
+    {
+        for (std::size_t i = 0; i < enemies_.size(); ++i)
+        {
+            const EnemyTank& enemy = *enemies_[i];
+            if (!enemy.isAlive() || !enemy.isVisible())
+            {
+                continue;
+            }
+
+            const FloatVec2 enemyPrecise = enemy.precisePosition();
+            const FloatVec2 enemyCellCenter(enemy.position());
+            if ((std::fabs(preciseTarget.x - enemyPrecise.x) <= radius &&
+                 std::fabs(preciseTarget.y - enemyPrecise.y) <= radius) ||
+                (std::fabs(preciseTarget.x - enemyCellCenter.x) <= radius &&
+                 std::fabs(preciseTarget.y - enemyCellCenter.y) <= radius))
+            {
+                hitCenter = enemy.position();
+                return true;
+            }
+        }
+    }
+    else if (player_.isAlive())
+    {
+        const FloatVec2 playerPrecise = player_.precisePosition();
+        const FloatVec2 playerCellCenter(player_.position());
+        if ((std::fabs(preciseTarget.x - playerPrecise.x) <= radius &&
+             std::fabs(preciseTarget.y - playerPrecise.y) <= radius) ||
+            (std::fabs(preciseTarget.x - playerCellCenter.x) <= radius &&
+             std::fabs(preciseTarget.y - playerCellCenter.y) <= radius))
+        {
+            hitCenter = player_.position();
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool Game::isOccupiedByTank(const Vec2& position, const Entity* requester) const
 {
     if (&player_ != requester && player_.isAlive() && player_.position() == position)
@@ -1415,6 +1779,23 @@ bool Game::isOccupiedByTank(const Vec2& position, const Entity* requester) const
     }
 
     return false;
+}
+
+bool Game::isOccupiedByEnemyTank(const Vec2& position, bool fromPlayer) const
+{
+    if (fromPlayer)
+    {
+        for (std::size_t i = 0; i < enemies_.size(); ++i)
+        {
+            if (enemies_[i]->isAlive() && enemies_[i]->position() == position)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    return player_.isAlive() && player_.position() == position;
 }
 
 void Game::damageTankAt(const Vec2& position, bool fromPlayer, DamageType damageType, Direction attackDirection)
@@ -1452,7 +1833,7 @@ void Game::damageTankAt(const Vec2& position, bool fromPlayer, DamageType damage
 
 void Game::checkGameState()
 {
-    if (!player_.isAlive() || map_.isBaseDestroyed())
+    if (!player_.isAlive())
     {
         state_ = GameState::Defeat;
     }

@@ -41,11 +41,12 @@ void Renderer::draw(const Game& game)
             output += " [" + status + "]";
         }
     }
-    output += "\nItems  Shield:" + std::to_string(game.shieldCharges());
-    output += "  F-Bomb:" + std::to_string(game.bombShells());
-    output += "  E-Laser:" + std::to_string(game.lasers());
-    output += "  Q-Shovel:" + std::to_string(game.shovels());
-    output += "  G-Decoy:" + std::to_string(game.decoys());
+    output += "\nItems  Shield:";
+    output += game.shieldCharges() > 0 ? "ON" : "OFF";
+    output += "  F-Bomb x" + std::to_string(game.bombShells());
+    output += "  E-Laser x" + std::to_string(game.lasers());
+    output += "  Q-Shovel x" + std::to_string(game.shovels());
+    output += "  G-Mine x" + std::to_string(game.mines());
     output += "\nWASD move  J fire  T trench  R restart  Esc quit\n";
 
     if (game.state() == GameState::Victory)
@@ -69,7 +70,7 @@ void Renderer::showTitle()
 {
     system("cls");
     std::cout << "Tank Battle\n";
-    std::cout << "WASD move, J fire, F bomb, E laser, Q shovel, G decoy, Esc quit\n\n";
+    std::cout << "WASD move, J fire, F bomb, E laser, Q shovel, G mine, Esc quit\n\n";
 }
 
 void Renderer::moveCursorHome() const

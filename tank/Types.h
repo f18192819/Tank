@@ -123,7 +123,7 @@ enum class PowerUpType
     BombShell = BlastShell,
     Laser,
     Shovel,
-    Decoy
+    Mine
 };
 
 enum class SkillType
