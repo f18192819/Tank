@@ -1,7 +1,7 @@
 # Tank Battle
 
 Visual Studio 2022 C++ Win32 graphical project for an OOP course design task.
-The game uses a classic Battle City style: black playfield, gray status border, orange brick walls, white steel blocks, pixel tanks, a home screen, settings screen, difficulty selection, and a compact in-game HUD.
+The game uses a classic Battle City style: black playfield, gray status border, orange brick walls, white steel blocks, pixel tanks, a home screen, settings screen, difficulty selection, a compact in-game HUD, and lightweight animated visual effects for menus and combat readability.
 
 ## Controls
 
@@ -20,6 +20,7 @@ The game uses a classic Battle City style: black playfield, gray status border, 
 - Home screen:
   - left-side hero tank art, title, and primary buttons
   - right-side `MISSION BRIEFING` panel showing mode, level count, terrain count, item count, roster size, and victory goal
+  - animated checker backdrop, pixel particles, moving scanline, title pulse, and subtle button/tank feedback
   - bottom operation strip showing movement, fire, pause, and item keys
 - Field Guide:
   - unified reference page for terrain, items, effects, enemies, and bosses
@@ -28,10 +29,9 @@ The game uses a classic Battle City style: black playfield, gray status border, 
 
 ## Screens
 
-- Home screen: start game, difficulty, settings, quit.
 - Home screen: start game, difficulty, settings, legend, quit, plus mission briefing panel.
 - Difficulty screen: Easy, Normal, Hard.
-- Settings screen: sound toggle, grid toggle, standard/large pixel mode, and project info panel.
+- Settings screen: sound toggle, grid toggle, visual effects toggle, standard/large pixel mode, and project info panel.
 - Debug build settings: `Show FPS` can be toggled manually for UI inspection while staying hidden by default.
 - Credits screen: project summary, module overview, and AI-assisted development note.
 - Game screen: pixel map, unified tank sprites, terrain, items, boss HP bar, and grouped HUD.
@@ -63,6 +63,28 @@ The game uses a classic Battle City style: black playfield, gray status border, 
   - HP bar
   - active boss status text such as shield, invisibility, or reflect
   - subtle battlefield grid and darker scanline background for clearer pixel presentation
+
+## Dynamic Visual Effects
+
+- `tank/VisualEffects.h` / `tank/VisualEffects.cpp`
+  - centralizes menu checker scroll, pixel particles, scanline drift, title/button pulses, and shared animation timing
+  - adds dynamic terrain and item overlays without changing gameplay rules
+- Menu effects:
+  - slow checker offset
+  - persistent low-count particles
+  - scanline sweep
+  - title pulse
+  - selected button border pulse and pointer sway
+- Map effects:
+  - swamp ripple pixels
+  - spawn-point pulse and imminent warning highlight
+  - trench conceal accent
+  - base breathing glow
+  - item aura / bob
+  - stronger laser, warning, explosion, and debris feedback
+- Runtime switch:
+  - `Settings -> Visual Effects: On/Off`
+  - turning it off keeps the same gameplay with a quieter static presentation
 
 ## Movement
 

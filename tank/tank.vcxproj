@@ -141,6 +141,7 @@
     <ClCompile Include="PowerUp.cpp" />
     <ClCompile Include="Renderer.cpp" />
     <ClCompile Include="Tank.cpp" />
+    <ClCompile Include="VisualEffects.cpp" />
     <ClCompile Include="WinApp.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -155,6 +156,7 @@
     <ClInclude Include="Types.h" />
     <ClInclude Include="PowerUp.h" />
     <ClInclude Include="WinApp.h" />
+    <ClInclude Include="VisualEffects.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

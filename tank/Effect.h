@@ -6,6 +6,7 @@ enum class EffectType
 {
     Warning,
     Explosion,
+    Debris,
     LaserMuzzle,
     LaserTrace,
     SpawnWarning,

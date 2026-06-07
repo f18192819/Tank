@@ -162,7 +162,11 @@ bool Game::spawnBullet(const Vec2& position, Direction direction, bool fromPlaye
 
     if (map_.isBulletBlocked(position))
     {
-        map_.damageTile(position, fromPlayer, DamageType::NormalShell);
+        const Tile tile = map_.tileAt(position);
+        if (map_.damageTile(position, fromPlayer, DamageType::NormalShell) && tile == Tile::WoodenBox)
+        {
+            createDebrisEffect(position, fromPlayer);
+        }
         return true;
     }
 
@@ -201,7 +205,11 @@ bool Game::resolveBulletHit(const Bullet& bullet, const Vec2& target)
         }
         else
         {
-            map_.damageTile(target, bullet.fromPlayer(), DamageType::NormalShell);
+            const Tile tile = map_.tileAt(target);
+            if (map_.damageTile(target, bullet.fromPlayer(), DamageType::NormalShell) && tile == Tile::WoodenBox)
+            {
+                createDebrisEffect(target, bullet.fromPlayer());
+            }
         }
         return true;
     }
@@ -388,7 +396,11 @@ void Game::explodeArea(const Vec2& center, bool fromPlayer)
             const Vec2 position(x, y);
             if (map_.inBounds(position))
             {
-                map_.damageTile(position, fromPlayer, DamageType::BombExplosion);
+                const Tile tile = map_.tileAt(position);
+                if (map_.damageTile(position, fromPlayer, DamageType::BombExplosion) && tile == Tile::WoodenBox)
+                {
+                    createDebrisEffect(position, fromPlayer);
+                }
                 damageTankAt(position, fromPlayer, DamageType::BombExplosion, Direction::Up);
             }
         }
@@ -1330,6 +1342,11 @@ const PlayerTank& Game::player() const
     return player_;
 }
 
+bool Game::playerInTrench() const
+{
+    return playerInTrench_;
+}
+
 char Game::mapGlyphAt(const Vec2& position) const
 {
     return map_.glyphAt(position);
@@ -1789,6 +1806,11 @@ void Game::createExplosionEffect(const Vec2& center, bool fromPlayer)
             }
         }
     }
+}
+
+void Game::createDebrisEffect(const Vec2& center, bool fromPlayer)
+{
+    effects_.push_back(TimedEffect(center, 6, fromPlayer, '%', false, EffectType::Debris, DamageType::BombExplosion));
 }
 
 bool Game::findBlastTankHit(const Bullet& bullet, const FloatVec2& preciseTarget, Vec2& hitCenter) const

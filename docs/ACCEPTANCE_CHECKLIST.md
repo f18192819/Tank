@@ -23,5 +23,8 @@
 | Settings / Credits 基本可展示 | `Settings` 提供可调项，`Credits` 展示项目信息与 AI 说明 | `tank/WinApp.cpp` | 运行程序人工查看 | 是 |
 | Field Guide 风格统一 | 共用图标模块、统一标题/分栏/Back 按钮，并改为相对布局 | `tank/WinApp.cpp`, `tank/IconRenderer.*` | 运行程序人工查看 | 是 |
 | HUD 更像正式界面 | 分组顶栏、隐藏默认 FPS、道具图标库存、Boss 区域、生命格 | `tank/WinApp.cpp`, `tank/IconRenderer.*` | 运行程序人工查看 | 是 |
+| 主菜单具有低调动态背景 | 动态棋盘格、粒子、扫描线、标题呼吸、按钮脉冲 | `tank/VisualEffects.*`, `tank/WinApp.cpp` | 运行程序人工查看 + `Debug|x64` 构建 | 是 |
+| 地图具有轻量动态效果 | 沼泽水纹、刷新点脉冲、基地呼吸、道具光晕、木箱碎屑、激光/爆炸增强 | `tank/VisualEffects.*`, `tank/Game.cpp`, `tank/Effect.h`, `tank/WinApp.cpp` | 运行程序人工查看 + 构建验证 | 是 |
+| Visual Effects 开关真实生效 | `Settings -> Visual Effects: On/Off` 控制统一动态层 | `tank/WinApp.cpp`, `tank/VisualEffects.*` | 运行程序切换设置 + 构建验证 | 是 |
 | 设置项真实生效 | `Grid Overlay` 与 `Show FPS (Debug only)` 均接入实际绘制逻辑 | `tank/WinApp.cpp` | 运行程序切换设置 + 构建验证 | 是 |
 | 文档补齐 | 设计/测试/AI/验收文档 | `docs/*` | 文档检查 | 是 |

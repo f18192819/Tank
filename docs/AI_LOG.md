@@ -113,6 +113,17 @@
     - `Debug|x64`：编译通过
     - `Release|x64`：编译通过
     - 启动烟雾测试：`DebugAlive=True`，`ReleaseAlive=True`
+  - `2026-06-07` 动态视觉优化阶段：
+    - 新增 `VisualEffects` 模块并接入 VS 工程。
+    - 将菜单背景改为“缓慢滚动棋盘格 + 持久粒子 + 扫描线”的时间驱动绘制。
+    - `BATTLE CITY` 标题、选中按钮边框、左侧指针和底部启动提示改为低幅脉冲/摆动反馈。
+    - `Settings` 新增 `Visual Effects: On/Off`，可以统一关闭菜单、地图和战斗的动态覆盖层。
+    - 地图增加沼泽水纹、刷新点脉冲、战壕隐藏边框、基地呼吸光、墙体高光、道具/地雷光晕与浮动。
+    - 激光、空袭、召唤炸弹和爆炸统一增加更明显的动态覆盖层；木箱被破坏时新增碎屑效果。
+    - 本阶段先做 `Debug|x64` 编译，中途由编译器发现 `windows.h` 的 `min/max` 宏与 `std::min/std::max` 冲突，随后改为本地辅助函数修复。
+    - `Debug|x64`：编译通过
+    - `Release|x64`：编译通过
+    - `TANK_SELFTEST`：Debug/Release 重新执行并生成 `docs/SELFTEST_DEBUG_UI.txt` / `docs/SELFTEST_RELEASE_UI.txt`，结果均为 `PASS`
 
 ## 7. 使用 AI 辅助编程的经验体会
 

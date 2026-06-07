@@ -3,6 +3,7 @@
 #include <windowsx.h>
 #include <mmsystem.h>
 
+#include <cmath>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -10,6 +11,7 @@
 
 #include "Game.h"
 #include "IconRenderer.h"
+#include "VisualEffects.h"
 
 #pragma comment(lib, "winmm.lib")
 
@@ -40,6 +42,7 @@ public:
           difficulty_(Difficulty::Normal),
           soundOn_(true),
           showGrid_(true),
+          visualEffectsEnabled_(true),
           showFps_(false),
           largePixels_(false),
           selectedButton_(0),
@@ -50,9 +53,11 @@ public:
           mapCacheH_(0),
           fpsFrames_(0),
           fpsValue_(0),
-          fpsWindowStart_(timeGetTime())
+          fpsWindowStart_(timeGetTime()),
+          lastFrameTick_(timeGetTime())
     {
         game_.setDifficulty(difficulty_);
+        visualEffects_.setEnabled(visualEffectsEnabled_);
     }
 
     ~PixelApp()
@@ -104,10 +109,12 @@ private:
     Difficulty difficulty_;
     bool soundOn_;
     bool showGrid_;
+    bool visualEffectsEnabled_;
     bool showFps_;
     bool largePixels_;
     int selectedButton_;
     Game game_;
+    VisualEffects visualEffects_;
     std::vector<Button> buttons_;
     HBITMAP mapCacheBitmap_;
     int mapCacheVersion_;
@@ -117,6 +124,7 @@ private:
     int fpsFrames_;
     int fpsValue_;
     DWORD fpsWindowStart_;
+    DWORD lastFrameTick_;
 
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
@@ -145,6 +153,19 @@ private:
         switch (message)
         {
         case WM_TIMER:
+            {
+                const DWORD now = timeGetTime();
+                double deltaSeconds = static_cast<double>(now - lastFrameTick_) / 1000.0;
+                if (deltaSeconds < 0.0)
+                {
+                    deltaSeconds = 0.0;
+                }
+                lastFrameTick_ = now;
+                RECT client = {};
+                GetClientRect(hwnd_, &client);
+                visualEffects_.setEnabled(visualEffectsEnabled_);
+                visualEffects_.update(deltaSeconds, client);
+            }
             if (screen_ == Screen::Playing)
             {
                 game_.tick();
@@ -344,20 +365,34 @@ private:
             showGrid_ = !showGrid_;
             break;
         case 22:
-            largePixels_ = !largePixels_;
+            visualEffectsEnabled_ = !visualEffectsEnabled_;
+            visualEffects_.setEnabled(visualEffectsEnabled_);
             break;
         case 23:
-            showFps_ = !showFps_;
+            largePixels_ = !largePixels_;
             break;
         case 24:
+#ifdef _DEBUG
+            showFps_ = !showFps_;
+#else
             screen_ = Screen::Credits;
             selectedButton_ = 0;
+#endif
             break;
         case 25:
+#ifdef _DEBUG
+            screen_ = Screen::Credits;
+            selectedButton_ = 0;
+#else
+            screen_ = Screen::Home;
+            selectedButton_ = 0;
+#endif
+            break;
+        case 26:
             screen_ = Screen::Home;
             selectedButton_ = 0;
             break;
-        case 26:
+        case 27:
             screen_ = Screen::Home;
             selectedButton_ = 0;
             break;
@@ -428,6 +463,13 @@ private:
 
     void drawHome(HDC hdc, const RECT& client)
     {
+        const DWORD now = timeGetTime();
+        const int treadFrame = static_cast<int>((now / 160) % 2);
+        const int sweepWidth = 96;
+        const int sweepRange = (client.right - 48) - 756 - 32 - sweepWidth;
+        const int sweepX = 772 + static_cast<int>((now / 7) % (sweepRange > 1 ? sweepRange : 1));
+        const int lampFrame = static_cast<int>((now / 120) % 6);
+
         RECT leftPanel = {48, 76, 730, 670};
         RECT rightPanel = {756, 76, client.right - 48, 670};
         RECT bottomBar = {48, 700, client.right - 48, 786};
@@ -438,13 +480,39 @@ private:
         frame(hdc, rightPanel, RGB(217, 198, 111), 3);
         frame(hdc, bottomBar, RGB(92, 114, 108), 2);
 
+        RECT scanBand = {sweepX, rightPanel.top + 8, min(sweepX + sweepWidth, rightPanel.right - 8), rightPanel.bottom - 8};
+        fill(hdc, scanBand, RGB(24, 34, 34));
+        RECT scanCore = {scanBand.left + 10, scanBand.top, min(scanBand.left + 18, scanBand.right), scanBand.bottom};
+        fill(hdc, scanCore, RGB(48, 72, 66));
+
+        RECT underline = {252, 154, 520, 160};
+        fill(hdc, underline, RGB(58, 82, 76));
+
+        for (int i = 0; i < 6; ++i)
+        {
+            RECT lamp = {bottomBar.right - 194 + i * 22, bottomBar.top + 18, bottomBar.right - 182 + i * 22, bottomBar.top + 30};
+            fill(hdc, lamp, i == lampFrame ? RGB(226, 176, 30) : RGB(58, 74, 70));
+            frame(hdc, lamp, RGB(128, 146, 138), 1);
+        }
+
         IconRenderer::DrawTankEmblem(hdc, 90, 108, 3, RGB(226, 176, 30));
-        text(hdc, 252, 108, L"BATTLE CITY", 52, RGB(244, 244, 244), true);
+        RECT treadA = {96, 190, 174, 196};
+        RECT treadB = {96, 198, 174, 204};
+        fill(hdc, treadA, treadFrame == 0 ? RGB(62, 78, 68) : RGB(88, 106, 92));
+        fill(hdc, treadB, treadFrame == 0 ? RGB(88, 106, 92) : RGB(62, 78, 68));
+        if (visualEffects_.shouldPulseEmblem())
+        {
+            RECT muzzle = {186, 136, 194, 142};
+            fill(hdc, muzzle, RGB(255, 226, 112));
+        }
+        text(hdc, 252, 108, L"BATTLE CITY", 52, visualEffects_.titleColor(), true);
         text(hdc, 256, 162, L"Classic pixel tank battle", 22, RGB(190, 190, 190), false);
 
         RECT chip = {256, 206, 438, 244};
         fill(hdc, chip, RGB(32, 42, 44));
         frame(hdc, chip, RGB(92, 114, 108), 2);
+        RECT chipLight = {chip.right - 26, chip.top + 10, chip.right - 14, chip.top + 22};
+        fill(hdc, chipLight, lampFrame % 2 == 0 ? RGB(92, 188, 132) : RGB(56, 88, 74));
         std::wstring difficulty = L"MODE: ";
         difficulty += difficultyName();
         text(hdc, 276, 216, difficulty, 18, RGB(232, 226, 190), true);
@@ -485,8 +553,9 @@ private:
             L"Tip: trenches, swamps, shields, bombs, lasers, and mines all matter once bosses start chaining skills.",
             16, RGB(178, 196, 186), false);
 
-        text(hdc, 176, 724, L"MOVE: WASD / Arrow    FIRE: Space / J    PAUSE: P", 18, RGB(218, 222, 210), true);
-        text(hdc, 122, 752, L"ITEMS: E Laser    F Bomb    Q Shovel    T Trench    G Mine", 18, RGB(170, 188, 178), true);
+        text(hdc, 150, 718, L"PRESS ENTER TO START / CLICK START GAME", 18, visualEffects_.footerPromptColor(), true);
+        text(hdc, 176, 742, L"MOVE: WASD / Arrow    FIRE: Space / J    PAUSE: P", 18, RGB(218, 222, 210), true);
+        text(hdc, 122, 766, L"ITEMS: E Laser    F Bomb    Q Shovel    T Trench    G Mine", 18, RGB(170, 188, 178), true);
     }
 
     void drawDifficulty(HDC hdc, const RECT& client)
@@ -507,16 +576,17 @@ private:
         text(hdc, 272, 166, L"Presentation-oriented settings for the current build.", 18, RGB(154, 169, 164), false);
         addButton(hdc, 330, 230, 340, 58, soundOn_ ? L"Sound: On" : L"Sound: Off", 20);
         addButton(hdc, 330, 308, 340, 58, showGrid_ ? L"Grid Overlay: On" : L"Grid Overlay: Off", 21);
-        addButton(hdc, 330, 386, 340, 58, largePixels_ ? L"Pixel Scale: Large" : L"Pixel Scale: Standard", 22);
+        addButton(hdc, 330, 386, 340, 58, visualEffectsEnabled_ ? L"Visual Effects: On" : L"Visual Effects: Off", 22);
+        addButton(hdc, 330, 464, 340, 58, largePixels_ ? L"Pixel Scale: Large" : L"Pixel Scale: Standard", 23);
 #ifdef _DEBUG
-        addButton(hdc, 330, 464, 340, 58, showFps_ ? L"Show FPS: On" : L"Show FPS: Off", 23);
-        addButton(hdc, 330, 536, 340, 58, L"Credits", 24);
-        addButton(hdc, 330, 608, 340, 58, L"Back", 25);
-        text(hdc, 304, 694, L"FPS is hidden by default and only shown when enabled here.", 18, RGB(154, 169, 164), false);
+        addButton(hdc, 330, 542, 340, 58, showFps_ ? L"Show FPS: On" : L"Show FPS: Off", 24);
+        addButton(hdc, 330, 620, 340, 58, L"Credits", 25);
+        addButton(hdc, 330, 698, 340, 44, L"Back", 27);
+        text(hdc, 270, 756, L"Visual Effects toggles menu and map animation without touching gameplay logic.", 16, RGB(154, 169, 164), false);
 #else
-        addButton(hdc, 330, 464, 340, 58, L"Credits", 24);
-        addButton(hdc, 330, 536, 340, 58, L"Back", 25);
-        text(hdc, 324, 576, L"FPS stays hidden in the polished HUD.", 18, RGB(154, 169, 164), false);
+        addButton(hdc, 330, 542, 340, 58, L"Credits", 24);
+        addButton(hdc, 330, 620, 340, 58, L"Back", 25);
+        text(hdc, 272, 704, L"Visual Effects can be disabled for a quieter presentation build.", 18, RGB(154, 169, 164), false);
 #endif
         fill(hdc, info, RGB(20, 26, 28));
         frame(hdc, info, RGB(217, 198, 111), 3);
@@ -809,6 +879,8 @@ private:
             drawGridOverlay(hdc, startX, startY, tile);
         }
 
+        drawDynamicTileLayer(hdc, startX, startY, tile);
+        drawPowerUpAuraLayer(hdc, startX, startY, tile);
         drawSmoothEntities(hdc, startX, startY, tile);
         drawHud(hdc, client);
     }
@@ -925,6 +997,94 @@ private:
         IconRenderer::DrawTile(hdc, x, y, tile, glyph, terrainOnly);
     }
 
+    bool hasSpawnWarningAt(const Vec2& position) const
+    {
+        for (std::size_t i = 0; i < game_.effects().size(); ++i)
+        {
+            if (game_.effects()[i].type == EffectType::SpawnWarning && game_.effects()[i].position == position)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool isBaseThreatened(const Vec2& position) const
+    {
+        for (std::size_t i = 0; i < game_.effects().size(); ++i)
+        {
+            const TimedEffect& effect = game_.effects()[i];
+            if ((effect.type == EffectType::Warning || effect.type == EffectType::AirStrikeWarning) &&
+                std::abs(effect.position.x - position.x) <= 2 &&
+                std::abs(effect.position.y - position.y) <= 2)
+            {
+                return true;
+            }
+        }
+
+        for (std::size_t i = 0; i < game_.enemies().size(); ++i)
+        {
+            const EnemyTank& enemy = *game_.enemies()[i];
+            if (enemy.isAlive() &&
+                std::abs(enemy.position().x - position.x) <= 3 &&
+                std::abs(enemy.position().y - position.y) <= 3)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void drawDynamicTileLayer(HDC hdc, int startX, int startY, int tile)
+    {
+        const bool playerHidden = game_.playerInTrench();
+        const Vec2 playerCell = game_.player().position();
+        for (int y = 0; y < GameMap::Height; ++y)
+        {
+            for (int x = 0; x < GameMap::Width; ++x)
+            {
+                const Vec2 cell(x, y);
+                const char glyph = game_.mapGlyphAt(cell);
+                const bool trenchHighlight = playerHidden && playerCell == cell && glyph == 'T';
+                const bool baseThreat = (glyph == 'B' || glyph == 'X') && isBaseThreatened(cell);
+                const bool imminentSpawn = (glyph == 'N' || glyph == 'E') && hasSpawnWarningAt(cell);
+                visualEffects_.drawTileOverlay(
+                    hdc,
+                    startX + x * tile,
+                    startY + y * tile,
+                    tile,
+                    glyph,
+                    trenchHighlight,
+                    baseThreat,
+                    imminentSpawn);
+            }
+        }
+    }
+
+    void drawPowerUpAuraLayer(HDC hdc, int startX, int startY, int tile)
+    {
+        for (std::size_t i = 0; i < game_.powerUps().size(); ++i)
+        {
+            const PowerUp& powerUp = *game_.powerUps()[i];
+            if (powerUp.isAlive())
+            {
+                const int px = startX + static_cast<int>((powerUp.precisePosition().x - 0.5) * tile);
+                const int py = startY + static_cast<int>((powerUp.precisePosition().y - 0.5) * tile) +
+                    visualEffects_.itemBobOffset(powerUp.position(), powerUp.glyph());
+                visualEffects_.drawPowerUpAura(hdc, px, py, tile, powerUp.glyph());
+            }
+        }
+
+        for (std::size_t i = 0; i < game_.minePositions().size(); ++i)
+        {
+            const Vec2 mine = game_.minePositions()[i];
+            const int px = startX + mine.x * tile;
+            const int py = startY + mine.y * tile + visualEffects_.itemBobOffset(mine, 'M');
+            visualEffects_.drawPowerUpAura(hdc, px, py, tile, 'M');
+        }
+    }
+
     void drawSmoothEntities(HDC hdc, int startX, int startY, int tile)
     {
         for (std::size_t i = 0; i < game_.powerUps().size(); ++i)
@@ -932,9 +1092,10 @@ private:
             const PowerUp& powerUp = *game_.powerUps()[i];
             if (powerUp.isAlive())
             {
+                const int bob = visualEffects_.itemBobOffset(powerUp.position(), powerUp.glyph());
                 drawTile(hdc,
                     startX + static_cast<int>((powerUp.precisePosition().x - 0.5) * tile),
-                    startY + static_cast<int>((powerUp.precisePosition().y - 0.5) * tile),
+                    startY + static_cast<int>((powerUp.precisePosition().y - 0.5) * tile) + bob,
                     tile,
                     powerUp.glyph());
             }
@@ -943,9 +1104,10 @@ private:
         for (std::size_t i = 0; i < game_.minePositions().size(); ++i)
         {
             const Vec2 mine = game_.minePositions()[i];
+            const int bob = visualEffects_.itemBobOffset(mine, 'M');
             drawTile(hdc,
                 startX + mine.x * tile,
-                startY + mine.y * tile,
+                startY + mine.y * tile + bob,
                 tile,
                 'M');
         }
@@ -955,6 +1117,7 @@ private:
             const TimedEffect& effect = game_.effects()[i];
             const int cx = startX + static_cast<int>((effect.position.x + 0.5) * tile);
             const int cy = startY + static_cast<int>((effect.position.y + 0.5) * tile);
+            visualEffects_.drawTimedEffectOverlay(hdc, cx, cy, tile, effect);
             if (effect.type == EffectType::SpawnWarning)
             {
                 drawSpawnWarning(hdc, cx, cy, tile, effect.ticks);
@@ -974,6 +1137,9 @@ private:
             else if (effect.type == EffectType::Explosion)
             {
                 drawExplosionBurst(hdc, cx, cy, tile, effect.ticks, effect.totalTicks);
+            }
+            else if (effect.type == EffectType::Debris)
+            {
             }
             else
             {
@@ -1116,48 +1282,20 @@ private:
         Button button = {{x, y, x + width, y + height}, label, id};
         const bool selected = static_cast<int>(buttons_.size()) == selectedButton_;
         buttons_.push_back(button);
-        fill(hdc, button.rect, selected ? RGB(74, 90, 70) : RGB(28, 34, 34));
-        frame(hdc, button.rect, selected ? RGB(242, 232, 188) : RGB(79, 96, 88), 3);
+        fill(hdc, button.rect, selected ? visualEffects_.selectedButtonFillColor() : RGB(28, 34, 34));
+        frame(hdc, button.rect, selected ? visualEffects_.selectedButtonBorderColor() : RGB(79, 96, 88), 3);
         if (selected)
         {
             RECT strip = {x + 6, y + 6, x + 14, y + height - 6};
             fill(hdc, strip, RGB(226, 176, 30));
-            IconRenderer::DrawMenuPointer(hdc, x + 18, y + height / 2 - 8, 16, RGB(242, 232, 188));
+            IconRenderer::DrawMenuPointer(hdc, x + 18 + visualEffects_.pointerOffset(), y + height / 2 - 8, 16, RGB(242, 232, 188));
         }
         text(hdc, x + 54, y + (height - 26) / 2 - 1, label, 22, RGB(232, 226, 190), true);
     }
 
     void drawPixelBackdrop(HDC hdc, const RECT& client)
     {
-        for (int y = 0; y < client.bottom; y += 28)
-        {
-            for (int x = 0; x < client.right; x += 28)
-            {
-                if (((x / 28) + (y / 28)) % 2 == 0)
-                {
-                    RECT r = {x, y, x + 28, y + 28};
-                    fill(hdc, r, RGB(12, 17, 18));
-                }
-            }
-        }
-
-        HPEN scanPen = CreatePen(PS_SOLID, 1, RGB(14, 18, 20));
-        HGDIOBJ oldPen = SelectObject(hdc, scanPen);
-        for (int y = 0; y < client.bottom; y += 6)
-        {
-            MoveToEx(hdc, 0, y, nullptr);
-            LineTo(hdc, client.right, y);
-        }
-        SelectObject(hdc, oldPen);
-        DeleteObject(scanPen);
-
-        for (int i = 0; i < 18; ++i)
-        {
-            const int px = 36 + (i * 67) % (client.right - 72);
-            const int py = 20 + (i * 43) % (client.bottom - 40);
-            RECT spark = {px, py, px + 2, py + 2};
-            fill(hdc, spark, (i % 3 == 0) ? RGB(42, 56, 54) : RGB(28, 38, 40));
-        }
+        visualEffects_.drawMenuBackdrop(hdc, client);
     }
 
     void drawGridOverlay(HDC hdc, int startX, int startY, int tile)

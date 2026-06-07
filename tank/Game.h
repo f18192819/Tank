@@ -94,6 +94,7 @@ public:
     const std::vector<TimedEffect>& effects() const;
     const std::vector<Vec2>& minePositions() const;
     const PlayerTank& player() const;
+    bool playerInTrench() const;
     char mapGlyphAt(const Vec2& position) const;
     int mapVersion() const;
 
@@ -134,6 +135,7 @@ private:
     void resolveBulletCollisions();
     void removeDeadEntities();
     void createExplosionEffect(const Vec2& center, bool fromPlayer);
+    void createDebrisEffect(const Vec2& center, bool fromPlayer);
     bool findBlastTankHit(const Bullet& bullet, const FloatVec2& preciseTarget, Vec2& hitCenter) const;
     bool isOccupiedByTank(const Vec2& position, const Entity* requester) const;
     bool isOccupiedByEnemyTank(const Vec2& position, bool fromPlayer) const;

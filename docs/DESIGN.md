@@ -24,6 +24,8 @@
   - 预警线、爆炸、激光炮口、刷新提示、空袭提示等时序特效。
 - `IconRenderer`
   - 统一承载地形、道具、敌人/Boss、激光、爆炸、预警和菜单装饰图的像素绘制。
+- `VisualEffects`
+  - 负责菜单动态背景、粒子、扫描线、动态地形覆盖层、道具光效和战斗特效增强。
 
 ## 3. 类设计说明
 
@@ -204,3 +206,26 @@
 - 面板使用深色实心矩形和浅黄色硬边框
 - 避免圆角、渐变和玻璃拟态
 - 通过统一的按钮边框、选中指针、图标高光密度和 HUD 分区建立“同一套 UI 系统”的观感
+
+## 18. 动态视觉系统设计
+
+- 新增 `tank/VisualEffects.h` / `tank/VisualEffects.cpp`
+  - 统一维护 `timeSeconds_`、棋盘格滚动偏移、扫描线位置、粒子数组和多类脉冲参数。
+  - 所有动态效果都通过 `update(deltaSeconds, client)` 更新，通过独立 `draw...()` 接口绘制。
+- 菜单动态背景
+  - `drawMenuBackdrop()` 负责动态棋盘格、像素粒子、缓慢移动扫描线。
+  - `titleColor()`、`selectedButtonBorderColor()`、`pointerOffset()` 为标题呼吸、按钮边框脉冲和指针摆动提供统一参数。
+- 地图动态层
+  - `drawTileOverlay()` 负责沼泽水纹、刷新点脉冲、战壕隐藏边框、墙壁高光、基地呼吸光。
+  - `drawPowerUpAura()` 与 `itemBobOffset()` 负责场上道具和地雷的轻微浮动/闪烁。
+- 战斗特效增强
+  - `drawTimedEffectOverlay()` 在不改伤害逻辑的前提下增强爆炸帧、激光余辉、空袭闪烁和召唤/投弹倒计时表现。
+  - 木箱被摧毁时由 `Game::createDebrisEffect()` 增加短暂碎屑粒子提示。
+- Settings 开关
+  - `WinApp` 新增 `visualEffectsEnabled_`。
+  - `Settings -> Visual Effects: On/Off` 会统一控制菜单、地图和战斗动态层，不影响碰撞、拾取、伤害和胜负判定。
+- 封装与组合体现
+  - `Game` 继续只负责规则与状态。
+  - `IconRenderer` 负责静态像素图元。
+  - `VisualEffects` 负责“时间驱动的动态覆盖层”。
+  - `WinApp` 通过组合 `Game + IconRenderer + VisualEffects` 完成 update/draw 分离的轻量动画系统。
