@@ -142,6 +142,20 @@ void GameMap::loadLevel(int level)
 
         tiles_.push_back(row);
     }
+
+    // Keep spawn points distributed toward the four corners for more readable pacing.
+    tiles_[1][2] = 'N';
+    tiles_[1][Width - 3] = 'N';
+    tiles_[Height - 2][2] = 'N';
+    tiles_[Height - 2][Width - 3] = 'N';
+    if (currentLevel_ >= 2)
+    {
+        tiles_[1][6] = 'E';
+        tiles_[1][Width - 7] = 'E';
+        tiles_[Height - 2][6] = 'E';
+        tiles_[Height - 2][Width - 7] = 'E';
+    }
+
     baseDestroyed_ = false;
     ++version_;
 }
@@ -211,6 +225,10 @@ bool GameMap::damageTile(const Vec2& position, bool fromPlayer, DamageType damag
     const Tile tile = tileAt(position);
     if (tile == Tile::WoodenBox)
     {
+        if (!fromPlayer && damageType == DamageType::NormalShell)
+        {
+            return false;
+        }
         tiles_[position.y][position.x] = encode(Tile::Empty);
         ++version_;
         return true;

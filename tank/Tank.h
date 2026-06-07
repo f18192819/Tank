@@ -90,6 +90,7 @@ private:
     int reflectTicks_;
     int chargeTicks_;
     int pathRefreshTicks_;
+    Vec2 moveTarget_;
     std::vector<Vec2> cachedPath_;
 
     void useSkill(Game& game);
@@ -97,4 +98,7 @@ private:
     void chooseTurnCooldown();
     int fixedFireInterval() const;
     void updateSuicidePath(Game& game);
+    bool isPatrolUnit() const;
+    Vec2 choosePatrolGoal(Game& game) const;
+    bool followPathToward(Game& game, const Vec2& target, int refreshDelay);
 };

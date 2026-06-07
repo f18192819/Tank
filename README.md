@@ -15,12 +15,54 @@ The game uses a classic Battle City style: black playfield, gray status border, 
 - `R`: restart
 - `Esc`: pause in game, return/back in menus
 
+## Menu And Guide
+
+- Home screen:
+  - left-side hero tank art, title, and primary buttons
+  - right-side `MISSION BRIEFING` panel showing mode, level count, terrain count, item count, roster size, and victory goal
+  - bottom operation strip showing movement, fire, pause, and item keys
+- Field Guide:
+  - unified reference page for terrain, items, effects, enemies, and bosses
+  - uses the same icon drawing module as the in-game map and HUD
+  - panel positions follow the window width more closely instead of relying on a single fixed coordinate set
+
 ## Screens
 
 - Home screen: start game, difficulty, settings, quit.
+- Home screen: start game, difficulty, settings, legend, quit, plus mission briefing panel.
 - Difficulty screen: Easy, Normal, Hard.
-- Settings screen: sound toggle, grid toggle, standard/large pixel mode.
-- Game screen: pixel map, tank sprites, terrain, items, boss HP bar, compact HUD.
+- Settings screen: sound toggle, grid toggle, standard/large pixel mode, and project info panel.
+- Debug build settings: `Show FPS` can be toggled manually for UI inspection while staying hidden by default.
+- Credits screen: project summary, module overview, and AI-assisted development note.
+- Game screen: pixel map, unified tank sprites, terrain, items, boss HP bar, and grouped HUD.
+  - optional grid overlay can be toggled from `Settings`
+
+## Icon System
+
+- `tank/IconRenderer.h` / `tank/IconRenderer.cpp`
+  - centralizes terrain, item, enemy, boss, warning, explosion, laser, and emblem drawing
+  - reused by:
+    - home/menu visuals
+    - Field Guide
+    - in-game map drawing
+    - HUD item icons
+- style rules:
+  - hard-edged pixel rectangles
+  - limited palette
+  - shared outlines and highlights
+  - color semantics for defense, danger, elite units, and terrain
+
+## HUD
+
+- Top-left:
+  - `LV`, `HP` life pips, zero-padded `SCORE`, remaining `ENEMY`
+- Top-right:
+  - shield state plus item icons and counts for bomb, laser, shovel, mine
+- Boss fight:
+  - dedicated boss name area
+  - HP bar
+  - active boss status text such as shield, invisibility, or reflect
+  - subtle battlefield grid and darker scanline background for clearer pixel presentation
 
 ## Movement
 
@@ -44,6 +86,7 @@ Tanks and bullets use continuous floating-point positions for smoother movement.
 - `Bullet`: projectile movement and speed.
 - `PowerUp`: collectible items.
 - `TimedEffect`: warning markers, bombs, explosions, and air strike effects.
+- `IconRenderer`: shared pixel-art icon and effect drawing module.
 - `Renderer`: console drawing.
 
 Open `tank.sln` in Visual Studio and run Debug x64 or x86. The project subsystem is Windows, so it opens as a graphical window instead of a console.

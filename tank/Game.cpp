@@ -397,7 +397,27 @@ void Game::explodeArea(const Vec2& center, bool fromPlayer)
 
 void Game::fireLaser(const Vec2& start, Direction direction, bool fromPlayer)
 {
-    Vec2 position = start + DirectionDelta(direction);
+    fireLaser(FloatVec2(start), direction, fromPlayer);
+}
+
+void Game::fireLaser(const FloatVec2& start, Direction direction, bool fromPlayer)
+{
+    const FloatVec2 delta = DirectionFloatDelta(direction);
+    const FloatVec2 muzzle(start.x + delta.x * 0.58, start.y + delta.y * 0.58);
+    effects_.push_back(TimedEffect(
+        ToCell(start),
+        5,
+        fromPlayer,
+        DirectionGlyph(direction),
+        false,
+        EffectType::LaserMuzzle,
+        DamageType::Laser));
+
+    Vec2 position = ToCell(FloatVec2(muzzle.x + delta.x * 0.55, muzzle.y + delta.y * 0.55));
+    if (position == ToCell(start))
+    {
+        position = position + DirectionDelta(direction);
+    }
     while (map_.inBounds(position))
     {
         effects_.push_back(TimedEffect(
@@ -742,6 +762,15 @@ bool Game::runSelfTest(std::string& report)
         return std::make_pair(Vec2(-1, -1), Vec2(-1, -1));
     };
 
+    const auto nearCorner = [](const Vec2& position, int width, int height) -> bool
+    {
+        const bool top = position.y <= 1;
+        const bool bottom = position.y >= height - 2;
+        const bool left = position.x <= 6;
+        const bool right = position.x >= width - 7;
+        return (top || bottom) && (left || right);
+    };
+
     log << "Tank Battle self-test\n";
 
     std::set<char> terrainGlyphs;
@@ -750,9 +779,29 @@ bool Game::runSelfTest(std::string& report)
         map_.loadLevel(level);
         expect(map_.level() == level, "GameMap level load failed for level " + std::to_string(level));
         expect(!map_.normalSpawners().empty(), "Missing normal spawn point on level " + std::to_string(level));
+        int cornerNormalSpawns = 0;
+        const std::vector<Vec2> normalSpawns = map_.normalSpawners();
+        for (std::size_t i = 0; i < normalSpawns.size(); ++i)
+        {
+            if (nearCorner(normalSpawns[i], GameMap::Width, GameMap::Height))
+            {
+                ++cornerNormalSpawns;
+            }
+        }
+        expect(cornerNormalSpawns >= 4, "Normal spawn points are not distributed to four corners on level " + std::to_string(level));
         if (level >= 2)
         {
             expect(!map_.eliteSpawners().empty(), "Missing elite spawn point on level " + std::to_string(level));
+            int cornerEliteSpawns = 0;
+            const std::vector<Vec2> eliteSpawns = map_.eliteSpawners();
+            for (std::size_t i = 0; i < eliteSpawns.size(); ++i)
+            {
+                if (nearCorner(eliteSpawns[i], GameMap::Width, GameMap::Height))
+                {
+                    ++cornerEliteSpawns;
+                }
+            }
+            expect(cornerEliteSpawns >= 4, "Elite spawn points are not distributed to four corners on level " + std::to_string(level));
         }
         for (int y = 0; y < GameMap::Height; ++y)
         {
@@ -798,8 +847,8 @@ bool Game::runSelfTest(std::string& report)
     if (box.x >= 0)
     {
         map_.loadLevel(1);
-        expect(map_.damageTile(box, false, DamageType::NormalShell), "Enemy normal shell should break wooden box");
-        expect(map_.tileAt(box) == Tile::Empty, "Wooden box not cleared after enemy normal shell");
+        expect(!map_.damageTile(box, false, DamageType::NormalShell), "Enemy normal shell should not break wooden box");
+        expect(map_.tileAt(box) == Tile::WoodenBox, "Wooden box changed after enemy normal shell");
         map_.loadLevel(1);
         expect(map_.damageTile(box, true, DamageType::NormalShell), "Player normal shell should break wooden box");
         expect(map_.tileAt(box) == Tile::Empty, "Wooden box not cleared after player damage");
@@ -941,15 +990,20 @@ bool Game::runSelfTest(std::string& report)
     effects_.clear();
     fireLaser(Vec2(5, 5), Direction::Right, true);
     bool sawPlayerLaserTrace = false;
+    bool sawPlayerLaserMuzzle = false;
     for (std::size_t i = 0; i < effects_.size(); ++i)
     {
         if (effects_[i].type == EffectType::LaserTrace && effects_[i].fromPlayer)
         {
             sawPlayerLaserTrace = true;
-            break;
+        }
+        if (effects_[i].type == EffectType::LaserMuzzle && effects_[i].fromPlayer)
+        {
+            sawPlayerLaserMuzzle = true;
         }
     }
     expect(sawPlayerLaserTrace, "Laser power-up usage did not create player laser trace");
+    expect(sawPlayerLaserMuzzle, "Laser power-up usage did not create player laser muzzle effect");
 
     Vec2 mineCell(-1, -1);
     for (int y = 1; y < GameMap::Height - 1 && mineCell.x < 0; ++y)
@@ -1052,15 +1106,20 @@ bool Game::runSelfTest(std::string& report)
     effects_.clear();
     fireLaser(Vec2(5, 5), Direction::Right, true);
     bool sawLaserTrace = false;
+    bool sawLaserMuzzle = false;
     for (std::size_t i = 0; i < effects_.size(); ++i)
     {
         if (effects_[i].type == EffectType::LaserTrace)
         {
             sawLaserTrace = true;
-            break;
+        }
+        if (effects_[i].type == EffectType::LaserMuzzle)
+        {
+            sawLaserMuzzle = true;
         }
     }
     expect(sawLaserTrace, "Laser trace effect was not created");
+    expect(sawLaserMuzzle, "Laser muzzle effect was not created");
     log << "- Mine and laser effect checks complete\n";
 
     reset();
@@ -1172,16 +1231,25 @@ bool Game::runSelfTest(std::string& report)
 
     reset();
     enemies_.clear();
-    enemies_.push_back(std::unique_ptr<EnemyTank>(new EnemyTank(Vec2(GameMap::Width / 2, 2), EnemyKind::StageThreeBoss, 1234)));
+    if (bossArena.x >= 0)
+    {
+        player_ = PlayerTank(bossArena + Vec2(0, 3));
+        enemies_.push_back(std::unique_ptr<EnemyTank>(new EnemyTank(bossArena, EnemyKind::StageThreeBoss, 1234)));
+    }
     for (int i = 0; i < 60; ++i)
     {
         enemies_[0]->update(*this);
     }
     expect(enemies_[0]->isBoss(), "Stage three boss test entity missing");
     expect(enemies_[0]->reflectActive() || enemies_[0]->invisibleActive(), "Stage three boss did not activate special status");
+    expect(enemies_.size() >= 2, "Stage three boss did not summon elite support");
 
     enemies_.clear();
-    enemies_.push_back(std::unique_ptr<EnemyTank>(new EnemyTank(Vec2(GameMap::Width / 2, 2), EnemyKind::FinalBoss, 5678)));
+    if (bossArena.x >= 0)
+    {
+        player_ = PlayerTank(bossArena + Vec2(0, 3));
+        enemies_.push_back(std::unique_ptr<EnemyTank>(new EnemyTank(bossArena, EnemyKind::FinalBoss, 5678)));
+    }
     effects_.clear();
     for (int i = 0; i < 70; ++i)
     {
@@ -1196,6 +1264,8 @@ bool Game::runSelfTest(std::string& report)
     }
     expect(sawAirStrike, "Final boss did not create air strike warning in self-test");
     expect(sawBossLaser, "Final boss did not create laser trace in self-test");
+    expect(enemies_[0]->reflectActive() || enemies_[0]->invisibleActive(), "Final boss did not activate reflect or invisibility");
+    expect(enemies_.size() >= 2, "Final boss did not summon support enemy");
 
     enemies_.clear();
     enemies_.push_back(std::unique_ptr<EnemyTank>(new EnemyTank(Vec2(GameMap::Width / 2, 2), EnemyKind::Bomber, 9012)));

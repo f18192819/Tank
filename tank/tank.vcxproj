@@ -136,6 +136,7 @@
     <ClCompile Include="Entity.cpp" />
     <ClCompile Include="Game.cpp" />
     <ClCompile Include="GameMap.cpp" />
+    <ClCompile Include="IconRenderer.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="PowerUp.cpp" />
     <ClCompile Include="Renderer.cpp" />
@@ -148,6 +149,7 @@
     <ClInclude Include="Effect.h" />
     <ClInclude Include="Game.h" />
     <ClInclude Include="GameMap.h" />
+    <ClInclude Include="IconRenderer.h" />
     <ClInclude Include="Renderer.h" />
     <ClInclude Include="Tank.h" />
     <ClInclude Include="Types.h" />

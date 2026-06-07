@@ -273,7 +273,7 @@ void PlayerTank::update(Game& game)
     if (game.consumeLaserRequest() && lasers_ > 0)
     {
         --lasers_;
-        game.fireLaser(position_, direction_, true);
+        game.fireLaser(precisePosition_, direction_, true);
     }
 
     if (game.consumeShovelRequest() && shovels_ > 0)
@@ -309,7 +309,8 @@ EnemyTank::EnemyTank(const Vec2& position, EnemyKind kind, int seed)
       invisibilityTicks_(0),
       reflectTicks_(0),
       chargeTicks_(0),
-      pathRefreshTicks_(0)
+      pathRefreshTicks_(0),
+      moveTarget_(position)
 {
     direction_ = static_cast<Direction>((std::rand() + seed_) % 4);
     chooseTurnCooldown();
@@ -406,8 +407,8 @@ void EnemyTank::update(Game& game)
 
     if (aiCounter_ % moveInterval_ == 0)
     {
-        const Vec2 target = game.enemyAttractedTarget(position_);
-        const bool targetVisible = game.hasLineOfSight(position_, target);
+        const Vec2 playerTarget = game.enemyAttractedTarget(position_);
+        const bool targetVisible = game.hasLineOfSight(position_, playerTarget);
 
         if (kind_ == EnemyKind::Kamikaze)
         {
@@ -432,16 +433,37 @@ void EnemyTank::update(Game& game)
         {
             if (targetVisible)
             {
-                direction_ = DirectionToward(position_, target);
+                direction_ = DirectionToward(position_, playerTarget);
             }
 
-            if (targetVisible && IsAligned(position_, target) && fireTimer_ >= fixedFireInterval() / 2)
+            if (targetVisible && IsAligned(position_, playerTarget) && fireTimer_ >= fixedFireInterval() / 2)
             {
                 fireTimer_ = 0;
                 tryFire(game, false);
             }
 
-            if (!tryMove(game, direction_))
+            Vec2 movementTarget = playerTarget;
+            int refreshDelay = 12;
+            if (isPatrolUnit())
+            {
+                if (moveTarget_ == position_ || ManhattanDistance(position_, moveTarget_) <= 1)
+                {
+                    moveTarget_ = choosePatrolGoal(game);
+                }
+
+                movementTarget = moveTarget_;
+                refreshDelay = 22;
+                if (targetVisible && ManhattanDistance(position_, playerTarget) <= 6)
+                {
+                    movementTarget = playerTarget;
+                }
+            }
+            else
+            {
+                moveTarget_ = playerTarget;
+            }
+
+            if (!followPathToward(game, movementTarget, refreshDelay) && !tryMove(game, direction_))
             {
                 chooseNewDirection(game, true);
                 chooseTurnCooldown();
@@ -526,7 +548,7 @@ void EnemyTank::useSkill(Game& game)
         {
             direction_ = DirectionToward(position_, game.playerPosition());
         }
-        game.fireLaser(position_, direction_, false);
+        game.fireLaser(precisePosition_, direction_, false);
         skillCooldown_ = 95;
         break;
     case EnemyKind::Bomber:
@@ -557,7 +579,7 @@ void EnemyTank::useSkill(Game& game)
         };
         invisibilityTicks_ = 70;
         reflectTicks_ = 95;
-        game.fireLaser(position_, direction_, false);
+        game.fireLaser(precisePosition_, direction_, false);
         game.throwBomb(position_, game.playerPosition(), false, 10, 22);
         game.machineGun(position_);
         game.spawnEnemyNear(position_, summonKinds[std::rand() % 3]);
@@ -712,4 +734,74 @@ void EnemyTank::updateSuicidePath(Game& game)
             chooseNewDirection(game, true);
         }
     }
+}
+
+bool EnemyTank::isPatrolUnit() const
+{
+    return kind_ == EnemyKind::Scout || kind_ == EnemyKind::Bomber;
+}
+
+Vec2 EnemyTank::choosePatrolGoal(Game& game) const
+{
+    for (int attempt = 0; attempt < 24; ++attempt)
+    {
+        const int radius = 4 + std::rand() % 10;
+        const Vec2 candidate = game.randomAround(position_, radius);
+        if (game.canOccupy(candidate, this) && ManhattanDistance(position_, candidate) >= 3)
+        {
+            return candidate;
+        }
+    }
+
+    return position_;
+}
+
+bool EnemyTank::followPathToward(Game& game, const Vec2& target, int refreshDelay)
+{
+    if (target != moveTarget_)
+    {
+        moveTarget_ = target;
+        pathRefreshTicks_ = 0;
+        cachedPath_.clear();
+    }
+
+    if (pathRefreshTicks_ <= 0 || cachedPath_.empty())
+    {
+        cachedPath_ = game.findPath(position_, target);
+        pathRefreshTicks_ = refreshDelay;
+    }
+    else
+    {
+        --pathRefreshTicks_;
+    }
+
+    while (!cachedPath_.empty() && cachedPath_.front() == position_)
+    {
+        cachedPath_.erase(cachedPath_.begin());
+    }
+
+    if (cachedPath_.empty())
+    {
+        return false;
+    }
+
+    const Vec2 next = cachedPath_.front();
+    const Vec2 delta = next - position_;
+    if (delta.x > 0) direction_ = Direction::Right;
+    else if (delta.x < 0) direction_ = Direction::Left;
+    else if (delta.y > 0) direction_ = Direction::Down;
+    else if (delta.y < 0) direction_ = Direction::Up;
+
+    if (tryMove(game, direction_))
+    {
+        if (position_ == next)
+        {
+            cachedPath_.erase(cachedPath_.begin());
+        }
+        return true;
+    }
+
+    cachedPath_.clear();
+    pathRefreshTicks_ = 0;
+    return false;
 }

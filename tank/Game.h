@@ -60,6 +60,7 @@ public:
     bool tryEnterTrench();
     void explodeArea(const Vec2& center, bool fromPlayer);
     void fireLaser(const Vec2& start, Direction direction, bool fromPlayer);
+    void fireLaser(const FloatVec2& start, Direction direction, bool fromPlayer);
     void markDanger(const Vec2& center, int ticks, bool fromPlayer);
     void throwBomb(const Vec2& from, const Vec2& toward, bool fromPlayer, int range, int warningTicks);
     bool placeMine(const Vec2& position);
